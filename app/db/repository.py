@@ -9,10 +9,10 @@ from app.utils.time import today_msk, now_msk
 from app.services.limits import is_paid_active, is_banned
 
 class Repository:
-    def __init__(self, db, tz: str, daily_limit_free: int, daily_hard_limit: int):
+    def __init__(self, db, tz: str, free_limit: int, daily_hard_limit: int):
         self.db = db
         self.tz = tz
-        self.daily_limit_free = daily_limit_free
+        self.free_limit = free_limit
         self.daily_hard_limit = daily_hard_limit
 
     def _ensure_user(self, chat_id: int) -> UserSubscription:
@@ -22,7 +22,7 @@ class Repository:
             u = UserSubscription(
                 date=today,
                 chat_id=chat_id,
-                num_request=self.daily_limit_free,
+                num_request=self.free_limit,
                 subscribe=0,
                 total_requests=0,
             )
@@ -34,16 +34,19 @@ class Repository:
         if u.date != today:
             u.date = today
             u.total_requests = 0
-            if u.subscribe == 0:
-                u.num_request = self.daily_limit_free
             u.ban_until = None
+
+            if u.subscribe == 0:
+                u.num_request = self.free_limit
+            else:
+                u.num_request = None
 
         # Если подписка кончилась — возвращаем в free
         if u.subscribe == 1 and u.end_payment_date is not None and today > u.end_payment_date:
             u.subscribe = 0
             u.payment_date = None
             u.end_payment_date = None
-            u.num_request = self.daily_limit_free
+            u.num_request = self.free_limit
 
         return u
 
@@ -70,8 +73,9 @@ class Repository:
 
         # hard-limit (антиабуз)
         if u.total_requests >= self.daily_hard_limit:
-            u.ban_until = today  # бан до конца суток (следующий день сбросит)
-            return False, "⛔️ Слишком много запросов за сутки. Вас забанило на сутки. Поддержка: test@gmail.com"
+            u.ban_until = today
+            return False, "⛔️ Слишком много запросов за сутки. Напишите в поддержку: test@gmail.com"
+
 
         if paid:
             return True, ""

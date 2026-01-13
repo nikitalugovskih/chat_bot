@@ -19,7 +19,7 @@ async def main():
     repo = Repository(
         db=db,
         tz=settings.tz,
-        daily_limit_free=settings.daily_limit_free,
+        free_limit=settings.free_limit,
         daily_hard_limit=settings.daily_hard_limit,
     )
     llm = OpenAIClient(api_key=settings.openai_api_key, model=settings.openai_model)
