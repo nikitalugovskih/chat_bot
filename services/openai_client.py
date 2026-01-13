@@ -1,0 +1,1 @@
+# вызов ChatGPT/OpenAI
