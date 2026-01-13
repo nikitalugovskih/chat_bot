@@ -145,3 +145,33 @@ class Repository:
                 last = r
         if last:
             last.summary = summary_text
+    
+    # --- admin ---
+
+    def list_users(self):
+        return list(self.db.user_subscriptions.values())
+
+    def admin_extend_paid_30d(self, chat_id: int):
+        # бесплатное продление/выдача платной на 30 дней
+        u = self._ensure_user(chat_id)
+        today = today_msk(self.tz)
+        u.subscribe = 1
+        u.payment_date = today
+        u.end_payment_date = today + timedelta(days=30)
+        u.num_request = None
+        return u
+
+    def admin_reset_subscription(self, chat_id: int):
+        # сброс к free
+        u = self._ensure_user(chat_id)
+        u.subscribe = 0
+        u.payment_date = None
+        u.end_payment_date = None
+        u.num_request = self.free_limit
+        return u
+
+    def admin_delete_user(self, chat_id: int):
+        # удалить из "таблицы #2"
+        self.db.user_subscriptions.pop(chat_id, None)
+        # удалить логи из "таблицы #1"
+        self.db.requests_log = [r for r in self.db.requests_log if r.chat_id != chat_id]
