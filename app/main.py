@@ -9,6 +9,7 @@ from app.db.repository import Repository
 from app.bot.handlers import router
 from app.services.openai_client import OpenAIClient
 from app.services.summary import build_summary
+import logging
 
 async def main():
     bot = Bot(token=settings.bot_token)
@@ -45,6 +46,12 @@ async def main():
 
     scheduler.add_job(daily_job, CronTrigger(hour=0, minute=0))
     scheduler.start()
+    
+    logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
 
     await dp.start_polling(bot)
 

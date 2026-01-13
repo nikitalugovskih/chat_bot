@@ -8,6 +8,15 @@ from aiogram.fsm.context import FSMContext
 from app.bot.keyboards import start_keyboard, subscription_keyboard
 from app.bot.states import ChatFlow
 
+from datetime import date
+
+from app.utils.time import today_msk
+
+import logging
+import hashlib
+
+logger = logging.getLogger("bot")
+
 router = Router()
 
 @router.message(CommandStart())
@@ -47,7 +56,25 @@ async def cb_subscription(call: CallbackQuery, repo):
 @router.callback_query(F.data == "pay_30d")
 async def cb_pay(call: CallbackQuery, repo):
     chat_id = call.message.chat.id
+    u = repo.get_user(chat_id)
+
+    today = today_msk(repo.tz)
+    already_active = (
+        u.subscribe == 1
+        and u.end_payment_date is not None
+        and today <= u.end_payment_date
+    )
+
+    if already_active:
+        # popup (можно show_alert=False, тогда это "тост" внизу)
+        await call.answer("✅ Подписка уже активна 🙂", show_alert=True)
+        return
+
     u = repo.activate_paid_30d(chat_id)
+
+    # обязательно закрываем "часики" у callback
+    await call.answer("✅ Оплата успешна!")
+
     await call.message.edit_text(
         f"✅ Подписка активирована до {u.end_payment_date}.\nТеперь запросы: анлим.",
         reply_markup=subscription_keyboard(),
@@ -73,6 +100,21 @@ async def on_chat_message(message: Message, repo, llm):
 
     # LLM
     try:
+        # короткий превью промпта + хэш, чтобы понимать что за версия/контент
+        prompt_text = getattr(__import__("app.services.openai_client", fromlist=["SYSTEM_PROMPT"]), "SYSTEM_PROMPT", "")
+        prompt_version = getattr(__import__("app.services.openai_client", fromlist=["PROMPT_VERSION"]), "PROMPT_VERSION", "unknown")
+
+        prompt_preview = prompt_text[:180].replace("\n", " ")
+        prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:12]
+
+        logger.info(
+            "chat_id=%s | prompt=%s | prompt_hash=%s | prompt_preview='%s' | user_input='%s'",
+            chat_id,
+            prompt_version,
+            prompt_hash,
+            prompt_preview,
+            (user_text[:300].replace("\n", " ")),
+        )
         answer = llm.generate(user_text)
     except Exception as e:
         await message.answer(f"⚠️ Ошибка модели: {e}")
