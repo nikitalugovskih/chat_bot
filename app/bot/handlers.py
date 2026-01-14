@@ -18,6 +18,8 @@ import hashlib
 
 import asyncio
 
+from aiogram.filters import Command
+
 logger = logging.getLogger("bot")
 
 router = Router()
@@ -42,6 +44,62 @@ async def cmd_start(message: Message, repo, state: FSMContext):
         "Или «Подписка», чтобы посмотреть лимиты/оплату."
     )
     await message.answer(text, reply_markup=start_keyboard())
+
+@router.message(Command("subscribe"))
+async def cmd_subscribe(message: Message, repo):
+    chat_id = message.chat.id
+    u = await repo.get_user(chat_id)
+
+    if u.subscribe == 1:
+        text = (
+            "✅ Подписка: PAID\n"
+            f"📅 Дата покупки: {u.payment_date}\n"
+            f"⏳ Действует до: {u.end_payment_date}\n"
+        )
+    else:
+        # для free показываем дату начала “дня” в системе (у тебя в БД date = текущий день/счётчики)
+        # но ты попросил “первое взаимодействие”. В текущей схеме это НЕ хранится отдельно.
+        # Поэтому честно показываем то, что есть: u.date (дата счётчиков).
+        text = (
+            "❌ Подписка: FREE\n"
+            f"📅 Дата в системе (счётчики на день): {u.date}\n"
+        )
+
+    await message.answer(text)
+
+@router.message(Command("limits"))
+async def cmd_limits(message: Message, repo):
+    chat_id = message.chat.id
+    u = await repo.get_user(chat_id)
+
+    left = "анлим" if u.num_request is None else str(u.num_request)
+    text = (
+        "📊 Лимиты:\n"
+        f"🧾 Осталось запросов: {left}\n"
+        f"🔢 Запросов сегодня: {u.total_requests}\n"
+    )
+    await message.answer(text)
+
+
+@router.message(Command("buy_subscribe"))
+async def cmd_buy_subscribe(message: Message):
+    await message.answer("🛠 В разработке.")
+
+
+@router.message(Command("service"))
+async def cmd_service(message: Message):
+    await message.answer("В случае предложений/жалоб, пишите на эту почту: test@gmail.com")
+
+
+@router.message(Command("ban_untill"))
+async def cmd_ban_until(message: Message, repo):
+    chat_id = message.chat.id
+    u = await repo.get_user(chat_id)
+
+    if u.ban_until is not None:
+        await message.answer(f"⛔️ Вы в бане до: {u.ban_until}")
+    else:
+        await message.answer("✅ Вы не в бане!")
 
 @router.callback_query(F.data == "start_chat")
 async def cb_start_chat(call: CallbackQuery, state: FSMContext):
