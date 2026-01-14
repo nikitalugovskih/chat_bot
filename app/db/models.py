@@ -34,3 +34,6 @@ class UserSubscription:
 
     # служебное (не просили, но очень удобно): если забанен до даты
     ban_until: Optional[date] = None
+
+    username: str | None = None
+    full_name: str | None = None

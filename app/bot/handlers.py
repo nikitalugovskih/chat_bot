@@ -22,12 +22,20 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message, repo, state: FSMContext):
     chat_id = message.chat.id
-    repo.get_user(chat_id)  # создаём пользователя сразу
+
+    # ✅ создать/обновить пользователя + обновить ник/имя
+    await repo.get_user(chat_id)
+    await repo.touch_user_profile(
+        chat_id=chat_id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
     await state.clear()
 
     text = (
         "Привет! 👋\n"
-        "Я чат-бот. Нажми «Начать», чтобы стартовать чат.\n"
+        "Я чат-бот Психолог. Нажми «Начать» или /start, чтобы стартовать чат.\n"
         "Или «Подписка», чтобы посмотреть лимиты/оплату."
     )
     await message.answer(text, reply_markup=start_keyboard())
@@ -40,7 +48,7 @@ async def cb_start_chat(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "subscription")
 async def cb_subscription(call: CallbackQuery, repo):
     chat_id = call.message.chat.id
-    u = repo.get_user(chat_id)
+    u = await repo.get_user(chat_id)
 
     paid_text = "да ✅" if u.subscribe == 1 else "нет ❌"
     left = "анлим" if u.num_request is None else str(u.num_request)
@@ -56,7 +64,7 @@ async def cb_subscription(call: CallbackQuery, repo):
 @router.callback_query(F.data == "pay_30d")
 async def cb_pay(call: CallbackQuery, repo):
     chat_id = call.message.chat.id
-    u = repo.get_user(chat_id)
+    u = await repo.get_user(chat_id)
 
     today = today_msk(repo.tz)
     already_active = (
@@ -70,7 +78,7 @@ async def cb_pay(call: CallbackQuery, repo):
         await call.answer("✅ Подписка уже активна 🙂", show_alert=True)
         return
 
-    u = repo.activate_paid_30d(chat_id)
+    u = await repo.activate_paid_30d(chat_id)
 
     # обязательно закрываем "часики" у callback
     await call.answer("✅ Оплата успешна!")
@@ -92,7 +100,13 @@ async def on_chat_message(message: Message, repo, llm):
     chat_id = message.chat.id
     user_text = message.text or ""
 
-    ok, reason = repo.can_make_request(chat_id)
+    await repo.touch_user_profile(
+        chat_id=chat_id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+
+    ok, reason = await repo.can_make_request(chat_id)
     if not ok:
         # если лимит — предлагаем оплату/подписку
         await message.answer(reason, reply_markup=subscription_keyboard())
@@ -121,6 +135,6 @@ async def on_chat_message(message: Message, repo, llm):
         return
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
-    repo.record_interaction_atomic(chat_id=chat_id, user_input=user_text, model_output=answer)
+    await repo.record_interaction_atomic(chat_id, user_text, answer)
 
     await message.answer(answer)

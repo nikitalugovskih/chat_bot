@@ -26,7 +26,7 @@ async def main():
     dp.include_router(admin_router)
     dp.include_router(user_router)
 
-    db = get_db(use_fake=settings.use_fake_db)
+    db = await get_db(use_fake=settings.use_fake_db, dsn=settings.pg_dsn)
     repo = Repository(
         db=db,
         tz=settings.tz,
@@ -45,10 +45,11 @@ async def main():
     scheduler = AsyncIOScheduler(timezone=settings.tz)
 
     async def daily_job():
-        for chat_id in list(db.user_subscriptions.keys()):
-            dialog = repo.get_day_dialog_text(chat_id)
+        chat_ids = await repo.list_chat_ids()
+        for chat_id in chat_ids:
+            dialog = await repo.get_day_dialog_text(chat_id)
             summary = build_summary(llm, dialog)
-            repo.save_daily_summary(chat_id, summary)
+            await repo.save_daily_summary(chat_id, summary)
 
     scheduler.add_job(daily_job, CronTrigger(hour=0, minute=0))
     scheduler.start()

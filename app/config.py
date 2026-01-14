@@ -18,4 +18,20 @@ class Settings:
     tz: str = os.getenv("TZ", "Europe/Moscow")
     admin_ids: set[int] = field(default_factory=lambda: _parse_admin_ids(os.getenv("ADMIN_IDS", "")))
 
+    # Postgres
+    pg_host: str = os.getenv("PG_HOST", "localhost")
+    pg_port: int = int(os.getenv("PG_PORT", "5432"))
+    pg_user: str = os.getenv("PG_USER", "postgres")
+    pg_password: str = os.getenv("PG_PASSWORD", "")
+    pg_database: str = os.getenv("PG_DATABASE", "postgres")
+    pg_sslmode: str = os.getenv("PG_SSLMODE", "disable")
+
+    @property
+    def pg_dsn(self) -> str:
+        return (
+            f"postgresql://{self.pg_user}:{self.pg_password}"
+            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+            f"?sslmode={self.pg_sslmode}"
+        )
+
 settings = Settings()
