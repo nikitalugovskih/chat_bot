@@ -5,11 +5,13 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.types import FSInputFile
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import Command
+from aiogram.types import LabeledPrice, PreCheckoutQuery
 
 from app.bot.keyboards import start_keyboard, subscription_keyboard
 from app.bot.states import ChatFlow
 
-from datetime import date
+from datetime import datetime
 
 from app.utils.time import today_msk
 
@@ -18,11 +20,49 @@ import hashlib
 
 import asyncio
 
-from aiogram.filters import Command
-
 logger = logging.getLogger("bot")
 
 router = Router()
+
+# payload для счета
+def make_payload(chat_id: int) -> str:
+    # уникальный payload чтобы отличать счета (не обязательно, но полезно)
+    return f"sub_30d:{chat_id}:{int(datetime.now().timestamp())}"
+
+async def send_stars_invoice(message: Message, chat_id: int, stars_price: int = 199):
+    await message.answer_invoice(
+        title="Подписка на 30 дней",
+        description="Анлим запросов в боте",
+        payload=make_payload(chat_id),
+        currency="XTR",
+        prices=[LabeledPrice(label="Подписка 30 дней", amount=stars_price)],
+        provider_token="",  # для Stars можно пустую строку
+    )
+
+@router.pre_checkout_query()
+async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await pre_checkout_query.answer(ok=True)
+
+@router.message(F.successful_payment)
+async def successful_payment(message: Message, repo):
+    chat_id = message.chat.id
+    sp = message.successful_payment
+
+    payload = getattr(sp, "invoice_payload", "")
+    if not payload.startswith(f"sub_30d:{chat_id}:"):
+        await message.answer("⚠️ Неизвестный платеж. Напишите в поддержку: test@gmail.com")
+        return
+
+    # 1) лог в payments
+    try:
+        await repo.log_payment_stars(chat_id, sp)
+    except Exception as e:
+        logger.exception("Failed to log payment: %r", e)
+
+    # 2) активируем подписку
+    u = await repo.activate_paid_30d(chat_id)
+
+    await message.answer(f"✅ Оплата прошла! Подписка активна до {u.end_payment_date}.")
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, repo, state: FSMContext):
@@ -83,7 +123,7 @@ async def cmd_limits(message: Message, repo):
 
 @router.message(Command("buy_subscribe"))
 async def cmd_buy_subscribe(message: Message):
-    await message.answer("🛠 В разработке.")
+    await send_stars_invoice(message, message.chat.id, stars_price=1)
 
 
 @router.message(Command("service"))
@@ -139,15 +179,8 @@ async def cb_pay(call: CallbackQuery, repo):
         await call.answer("✅ Подписка уже активна 🙂", show_alert=True)
         return
 
-    u = await repo.activate_paid_30d(chat_id)
-
-    # обязательно закрываем "часики" у callback
-    await call.answer("✅ Оплата успешна!")
-
-    await call.message.edit_text(
-        f"✅ Подписка активирована до {u.end_payment_date}.\nТеперь запросы: анлим.",
-        reply_markup=subscription_keyboard(),
-    )
+    await call.answer()  # закрыть "часики"
+    await send_stars_invoice(call.message, chat_id, stars_price=199)
 
 @router.callback_query(F.data == "back")
 async def cb_back(call: CallbackQuery, state: FSMContext):
@@ -198,10 +231,10 @@ async def on_chat_message(message: Message, repo, llm):
             (user_text[:300].replace("\n", " ")),
         )
 
-        answer = llm.generate(user_text)
+        answer = await asyncio.to_thread(llm.generate, user_text)
 
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка модели: {e}")
+        await message.answer(f"⚠️ Ошибка при обработке: {e}")
         return
 
     finally:

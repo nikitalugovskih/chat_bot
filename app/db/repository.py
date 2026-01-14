@@ -9,6 +9,8 @@ from app.db.models import RequestLog, UserSubscription
 from app.utils.time import today_msk, now_msk
 from app.services.limits import is_paid_active, is_banned
 
+import json
+
 
 def _day_bounds(tz_name: str, day: date) -> tuple[datetime, datetime]:
     tz = ZoneInfo(tz_name)
@@ -370,6 +372,110 @@ class Repository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch("SELECT chat_id FROM user_subscriptions")
             return [int(r["chat_id"]) for r in rows]
+        
+    async def log_payment_stars(self, chat_id: int, sp: Any) -> None:
+        """
+        Пишем платеж в таблицу payments. Защита от повторов по telegram_charge_id.
+        sp = message.successful_payment (aiogram SuccessfulPayment)
+        """
+        if self._is_fake():
+            return  # в fake режиме можно не логировать
+
+        # aiogram SuccessfulPayment (pydantic) -> dict
+        try:
+            raw = sp.model_dump()
+        except Exception:
+            raw = dict(sp)
+
+        provider = "telegram_stars"
+        currency = getattr(sp, "currency", None) or raw.get("currency")
+        amount = getattr(sp, "total_amount", None) or raw.get("total_amount")
+        payload = getattr(sp, "invoice_payload", None) or raw.get("invoice_payload")
+        telegram_charge_id = getattr(sp, "telegram_payment_charge_id", None) or raw.get("telegram_payment_charge_id")
+        provider_charge_id = getattr(sp, "provider_payment_charge_id", None) or raw.get("provider_payment_charge_id")
+
+        async with self.db.acquire() as conn:
+            # ON CONFLICT — чтобы один и тот же платеж не записался дважды
+            await conn.execute(
+                """
+                INSERT INTO payments
+                    (chat_id, provider, currency, amount, payload,
+                     telegram_charge_id, provider_charge_id, raw)
+                VALUES
+                    ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                ON CONFLICT (provider, telegram_charge_id) DO NOTHING
+                """,
+                chat_id,
+                provider,
+                currency,
+                int(amount) if amount is not None else 0,
+                payload or "",
+                telegram_charge_id,
+                provider_charge_id,
+                json.dumps(raw, ensure_ascii=False),
+            )
+
+    async def stars_total(self) -> int:
+        """Сумма Stars по нашей БД (payments)."""
+        if self._is_fake():
+            return 0
+
+        async with self.db.acquire() as conn:
+            val = await conn.fetchval(
+                """
+                SELECT COALESCE(SUM(amount), 0)
+                FROM payments
+                WHERE provider='telegram_stars' AND currency='XTR'
+                """
+            )
+            return int(val or 0)
+
+    async def stars_top_donors(self, limit: int = 20):
+        """Топ доноров по сумме Stars."""
+        if self._is_fake():
+            return []
+
+        async with self.db.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT
+                    p.chat_id,
+                    COALESCE(us.username, '') AS username,
+                    COALESCE(us.full_name, '') AS full_name,
+                    COALESCE(SUM(p.amount), 0) AS stars
+                FROM payments p
+                LEFT JOIN user_subscriptions us ON us.chat_id = p.chat_id
+                WHERE p.provider='telegram_stars' AND p.currency='XTR'
+                GROUP BY p.chat_id, us.username, us.full_name
+                ORDER BY stars DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
+    async def stars_last_payments(self, limit: int = 20):
+        """Последние оплаты Stars."""
+        if self._is_fake():
+            return []
+
+        async with self.db.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT
+                    p.created_at,
+                    p.chat_id,
+                    COALESCE(us.username, '') AS username,
+                    COALESCE(us.full_name, '') AS full_name,
+                    p.amount
+                FROM payments p
+                LEFT JOIN user_subscriptions us ON us.chat_id = p.chat_id
+                WHERE p.provider='telegram_stars' AND p.currency='XTR'
+                ORDER BY p.created_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
 
     # --- admin methods ---
 

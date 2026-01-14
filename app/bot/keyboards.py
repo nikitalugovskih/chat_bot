@@ -22,7 +22,8 @@ def admins_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔎 Проверить подписку (chat_id)", callback_data="adm:check_user")],
         [InlineKeyboardButton(text="➕ Продлить/выдать +30 дней", callback_data="adm:grant_30")],
         [InlineKeyboardButton(text="♻️ Сбросить подписку", callback_data="adm:reset_sub")],
-        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="adm:delete_user")],
+        [InlineKeyboardButton(text="⭐️ Stars", callback_data="adm:stars")],
+        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="adm:delete_user")]
     ])
 
 def admins_back_keyboard() -> InlineKeyboardMarkup:

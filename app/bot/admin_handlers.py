@@ -6,6 +6,8 @@ from aiogram.fsm.context import FSMContext
 from app.bot.keyboards import admins_keyboard, admins_back_keyboard, users_picker_keyboard
 from app.bot.states import AdminFlow
 
+from zoneinfo import ZoneInfo
+
 router = Router()
 
 def is_admin(chat_id: int, settings) -> bool:
@@ -245,3 +247,47 @@ async def adm_manual(call: CallbackQuery, settings, state: FSMContext):
         return
 
     await call.message.edit_text("Введи chat_id вручную:", reply_markup=admins_back_keyboard())
+
+@router.callback_query(F.data == "adm:stars")
+async def adm_stars(call: CallbackQuery, repo, settings):
+    if not is_admin(call.message.chat.id, settings):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+
+    total = await repo.stars_total()
+    top = await repo.stars_top_donors(limit=15)
+    last = await repo.stars_last_payments(limit=10)
+
+    lines = [f"⭐️ Stars (по нашей БД payments): {total}\n"]
+
+    if top:
+        lines.append("🏆 Топ доноров:")
+        for i, r in enumerate(top, 1):
+            name = (f"@{r['username']}" if r["username"] else r["full_name"]).strip()
+            if not name:
+                name = "—"
+            lines.append(f"{i}) {r['chat_id']} | {name} | ⭐️ {int(r['stars'])}")
+    else:
+        lines.append("🏆 Топ доноров: пока пусто")
+
+    lines.append("")
+
+    if last:
+        lines.append("🕒 Последние донаты:")
+        for r in last:
+            name = (f"@{r['username']}" if r["username"] else r["full_name"]).strip()
+            if not name:
+                name = "—"
+        dt = r["created_at"]  # это datetime с tz из Postgres
+        dt_msk = dt.astimezone(ZoneInfo("Europe/Moscow"))
+        dt_str = dt_msk.strftime("%d.%m.%Y %H:%M:%S")
+
+        lines.append(f"{dt_str} | {r['chat_id']} | {name} | ⭐️ {int(r['amount'])}")
+    else:
+        lines.append("🕒 Последние донаты: пока пусто")
+
+    text = "\n".join(lines)
+    if len(text) > 3800:
+        text = text[:3800] + "\n…"
+
+    await call.message.edit_text(text, reply_markup=admins_back_keyboard())
