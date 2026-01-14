@@ -2,6 +2,7 @@
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
+from aiogram.types import FSInputFile
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
@@ -14,6 +15,8 @@ from app.utils.time import today_msk
 
 import logging
 import hashlib
+
+import asyncio
 
 logger = logging.getLogger("bot")
 
@@ -113,8 +116,15 @@ async def on_chat_message(message: Message, repo, llm):
         return
 
     # LLM
+    loading_sticker = None
+    loading_text = None
+
     try:
-        # короткий превью промпта + хэш, чтобы понимать что за версия/контент
+        # 1) показываем анимированный стикер + текст
+        # loading_sticker = await message.answer_sticker(FSInputFile("app/assets/loader.tgs"))
+        loading_text = await message.answer("🎲 Получил ваш запрос, думаю, как вам помочь…")
+
+        # 2) твой лог + генерация
         prompt_text = getattr(__import__("app.services.openai_client", fromlist=["SYSTEM_PROMPT"]), "SYSTEM_PROMPT", "")
         prompt_version = getattr(__import__("app.services.openai_client", fromlist=["PROMPT_VERSION"]), "PROMPT_VERSION", "unknown")
 
@@ -129,10 +139,22 @@ async def on_chat_message(message: Message, repo, llm):
             prompt_preview,
             (user_text[:300].replace("\n", " ")),
         )
+
         answer = llm.generate(user_text)
+
     except Exception as e:
         await message.answer(f"⚠️ Ошибка модели: {e}")
         return
+
+    finally:
+        # 3) убираем лоадер (если получилось отправить)
+        for m in (loading_sticker, loading_text):
+            if m:
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)
