@@ -20,7 +20,23 @@ def start_keyboard() -> ReplyKeyboardMarkup:
 def subscription_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплата (30 дней)", callback_data="pay_30d")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+        # [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+    ])
+
+
+def pay_methods_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐️ TG Stars", callback_data="pay_method:stars")],
+        [InlineKeyboardButton(text="💳 Карта", callback_data="pay_method:card")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="pay_methods:back")],
+    ])
+
+
+def yookassa_pay_keyboard(confirmation_url: str, payment_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Перейти к оплате", url=confirmation_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"yk_check:{payment_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="pay_methods:back")],
     ])
 
 # --- ADMIN ---

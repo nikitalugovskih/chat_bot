@@ -476,6 +476,132 @@ class Repository:
                 limit,
             )
 
+    async def yk_insert_payment(
+        self,
+        *,
+        chat_id: int,
+        amount: int,
+        payload: str,
+        status: str,
+        external_payment_id: str,
+        idempotence_key: str,
+        confirmation_url: str,
+        raw: dict,
+    ) -> None:
+        """
+        payments columns (как у тебя):
+        created_at, chat_id, provider, currency, amount, payload, raw, status,
+        external_payment_id, idempotence_key, confirmation_url, updated_at, paid_at, canceled_at ...
+        """
+        if self._is_fake():
+            return
+
+        async with self.db.acquire() as conn:
+            # чтобы не плодить дубликаты, если юзер тыкнул дважды
+            exists = await conn.fetchval(
+                "SELECT 1 FROM payments WHERE provider='yookassa' AND external_payment_id=$1",
+                external_payment_id,
+            )
+            if exists:
+                return
+
+            await conn.execute(
+                """
+                INSERT INTO payments
+                (created_at, chat_id, provider, currency, amount, payload,
+                 telegram_charge_id, provider_charge_id, raw,
+                 status, external_payment_id, idempotence_key, confirmation_url,
+                 paid_at, canceled_at, updated_at)
+                VALUES
+                (NOW(), $1, 'yookassa', 'RUB', $2, $3,
+                 NULL, NULL, $4::jsonb,
+                 $5, $6, $7, $8,
+                 NULL, NULL, NOW())
+                """,
+                chat_id,
+                int(amount),
+                payload,
+                json.dumps(raw, ensure_ascii=False),
+                status,
+                external_payment_id,
+                idempotence_key,
+                confirmation_url,
+            )
+
+    async def yk_update_payment(
+        self,
+        *,
+        external_payment_id: str,
+        status: str,
+        raw: dict,
+        paid_at: datetime | None,
+        canceled_at: datetime | None,
+    ) -> None:
+        if self._is_fake():
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE payments
+                SET status=$2,
+                    raw=$3::jsonb,
+                    paid_at=$4,
+                    canceled_at=$5,
+                    updated_at=NOW()
+                WHERE provider='yookassa' AND external_payment_id=$1
+                """,
+                external_payment_id,
+                status,
+                json.dumps(raw, ensure_ascii=False),
+                paid_at,
+                canceled_at,
+            )
+
+    async def yk_get_payment(self, external_payment_id: str) -> dict | None:
+        if self._is_fake():
+            return None
+
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT *
+                FROM payments
+                WHERE provider='yookassa' AND external_payment_id=$1
+                LIMIT 1
+                """,
+                external_payment_id,
+            )
+            return dict(row) if row else None
+    
+    async def yk_get_recent_pending(self, chat_id: int, ttl_minutes: int = 10) -> dict[str, Any] | None:
+        """
+        Возвращает последний платеж YooKassa со статусом pending,
+        созданный за последние ttl_minutes минут.
+        """
+        if self._is_fake():
+            return None
+
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    external_payment_id,
+                    confirmation_url,
+                    created_at,
+                    status
+                FROM payments
+                WHERE provider='yookassa'
+                  AND chat_id=$1
+                  AND status='pending'
+                  AND created_at >= NOW() - ($2::int * INTERVAL '1 minute')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                chat_id,
+                ttl_minutes,
+            )
+            return dict(row) if row else None
 
     # --- admin methods ---
 

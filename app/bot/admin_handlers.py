@@ -278,11 +278,12 @@ async def adm_stars(call: CallbackQuery, repo, settings):
             name = (f"@{r['username']}" if r["username"] else r["full_name"]).strip()
             if not name:
                 name = "—"
-        dt = r["created_at"]  # это datetime с tz из Postgres
-        dt_msk = dt.astimezone(ZoneInfo("Europe/Moscow"))
-        dt_str = dt_msk.strftime("%d.%m.%Y %H:%M:%S")
 
-        lines.append(f"{dt_str} | {r['chat_id']} | {name} | ⭐️ {int(r['amount'])}")
+            dt = r["created_at"]  # datetime с tz из Postgres
+            dt_msk = dt.astimezone(ZoneInfo("Europe/Moscow"))
+            dt_str = dt_msk.strftime("%d.%m.%Y %H:%M:%S")
+
+            lines.append(f"{dt_str} | {r['chat_id']} | {name} | ⭐️ {int(r['amount'])}")
     else:
         lines.append("🕒 Последние донаты: пока пусто")
 
