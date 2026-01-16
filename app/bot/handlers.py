@@ -24,12 +24,45 @@ logger = logging.getLogger("bot")
 
 router = Router()
 
+from aiogram import F
+from aiogram.types import Message
+
+# --- КНОПКИ ГЛАВНОГО МЕНЮ (reply keyboard) ---
+
+@router.message(F.text == "💬 Начать")
+async def btn_start_chat(message: Message, state: FSMContext):
+    await state.set_state(ChatFlow.chatting)
+    await message.answer("Ок, пишите сообщение — я отвечу 🙂")
+
+
+@router.message(F.text == "ℹ️ Подписка")
+async def btn_subscription(message: Message, repo):
+    chat_id = message.chat.id
+    u = await repo.get_user(chat_id)
+
+    paid_text = "да ✅" if u.subscribe == 1 else "нет ❌"
+    left = "анлим" if u.num_request is None else str(u.num_request)
+
+    text = (
+        f"📌 Статус подписки: {paid_text}\n"
+        f"📆 Дата (счётчики на день): {u.date}\n"
+        f"🔢 Запросов сегодня: {u.total_requests}\n"
+        f"🧾 Осталось запросов: {left}\n"
+    )
+    await message.answer(text, reply_markup=subscription_keyboard())
+
+
+@router.message(F.text == "🛟 Поддержка")
+async def btn_support(message: Message):
+    # переиспользуем то, что уже есть в /service
+    await cmd_service(message)
+
 # payload для счета
 def make_payload(chat_id: int) -> str:
     # уникальный payload чтобы отличать счета (не обязательно, но полезно)
     return f"sub_30d:{chat_id}:{int(datetime.now().timestamp())}"
 
-async def send_stars_invoice(message: Message, chat_id: int, stars_price: int = 199):
+async def send_stars_invoice(message: Message, chat_id: int, stars_price: int = 1):
     await message.answer_invoice(
         title="Подписка на 30 дней",
         description="Анлим запросов в боте",
@@ -80,8 +113,9 @@ async def cmd_start(message: Message, repo, state: FSMContext):
 
     text = (
         "Привет! 👋\n"
-        "Я чат-бот Психолог. Нажми «Начать» или /start, чтобы стартовать чат.\n"
-        "Или «Подписка», чтобы посмотреть лимиты/оплату."
+        "Я чат-бот компаньон! Нажми «Начать», чтобы запустить чат со мной.\n"
+        "Или «Подписка», чтобы посмотреть лимиты/оплату.\n"
+        "Если нужна поддержка, жми «Поддержка».\n"
     )
     await message.answer(text, reply_markup=start_keyboard())
 
@@ -180,7 +214,7 @@ async def cb_pay(call: CallbackQuery, repo):
         return
 
     await call.answer()  # закрыть "часики"
-    await send_stars_invoice(call.message, chat_id, stars_price=199)
+    await send_stars_invoice(call.message, chat_id, stars_price=1)
 
 @router.callback_query(F.data == "back")
 async def cb_back(call: CallbackQuery, state: FSMContext):

@@ -14,6 +14,9 @@ from app.services.summary import build_summary
 
 
 async def main():
+    # если кто-то вебхуком начнет поллинг ронять - раскоментить
+    # bot = Bot(token=settings.bot_token)
+    # await bot.delete_webhook(drop_pending_updates=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",

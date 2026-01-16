@@ -1,13 +1,21 @@
 # inline клавиатуры
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-def start_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Начать", callback_data="start_chat")],
-        [InlineKeyboardButton(text="ℹ️ Подписка", callback_data="subscription")],
-    ])
+
+def start_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💬 Начать"), KeyboardButton(text="ℹ️ Подписка")],
+            [KeyboardButton(text="🛟 Поддержка")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери действие 👇",
+    )
 
 def subscription_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
