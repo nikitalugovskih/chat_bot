@@ -2,3 +2,4 @@ aiogram==3.*
 python-dotenv==1.*
 openai>=1.0.0
 apscheduler==3.*
+asyncpg>=0.29.0
