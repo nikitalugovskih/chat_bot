@@ -36,7 +36,14 @@ async def main():
         free_limit=settings.free_limit,
         daily_hard_limit=settings.daily_hard_limit,
     )
-    llm = OpenAIClient(api_key=settings.openai_api_key, model=settings.openai_model)
+
+    classifier_model = settings.openai_classifier_model or None
+    llm = OpenAIClient(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,                 # gpt-5
+        classifier_model=classifier_model,           # gpt-5-mini (если задано в env)
+    )
+
 
     @dp.update.outer_middleware()
     async def inject(handler, event, data):

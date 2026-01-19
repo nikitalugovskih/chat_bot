@@ -486,6 +486,18 @@ async def on_chat_message(message: Message, repo, llm):
         await message.answer(reason, reply_markup=subscription_keyboard())
         return
 
+    # --- SCOPE GATE (универсальное ограничение: отвечаем только про психологию) ---
+    # Не вызываем основной LLM-ответ, если запрос вне домена.
+    scope = await asyncio.to_thread(llm.classify, user_text)
+    if not scope.get("allowed", False):
+        refusal = scope.get("refusal") or (
+            "Я могу помогать только с психологическими вопросами. "
+            "Опиши, что ты чувствуешь/переживаешь в этой ситуации, и я поддержу."
+        )
+        await repo.record_interaction_atomic(chat_id, user_text, refusal)
+        await message.answer(refusal)
+        return
+
     # LLM
     loading_sticker = None
     loading_text = None
@@ -525,7 +537,6 @@ async def on_chat_message(message: Message, repo, llm):
                     await m.delete()
                 except Exception:
                     pass
-
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)

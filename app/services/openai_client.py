@@ -1,6 +1,9 @@
+import json
+from typing import Any, Dict
+
 from openai import OpenAI
 
-PROMPT_VERSION = "psy_v1"
+PROMPT_VERSION = "psy_v2"
 
 SYSTEM_PROMPT = """
 Ты — виртуальный психолог-помощник, психоаналитик (не врач) и близкий компаньон. Твоя задача — поддержка, прояснение чувств и мыслей, помощь в саморефлексии и выборе следующих шагов.
@@ -40,6 +43,37 @@ SYSTEM_PROMPT = """
 Язык общения: русский (если пользователь не попросит иначе), избегай излишних англицизмов.
 """.strip()
 
+# --- Router / scope classifier ---
+# Отдельный шаг перед генерацией ответа: решаем "психология это или нет".
+# Это универсально: мы НЕ перечисляем все темы мира; мы разрешаем только психологию.
+
+CLASSIFIER_INSTRUCTIONS = """
+Ты — строгий классификатор входящих сообщений для чат-бота психолога.
+
+Задача: определить, относится ли запрос к психологии/самопомощи/эмоциям/отношениям/поведению/саморефлексии.
+
+Правила:
+- allowed=true ТОЛЬКО если пользователь просит психологическую помощь (эмоции, стресс, отношения, самооценка, привычки, границы, выгорание, коммуникация, саморефлексия и т.п.).
+- Если пользователь просит экспертную помощь в другой области (программирование, SQL, маркетинг, бытовые советы, строительство/бетон, медицина, юриспруденция, финансы и т.п.) — это other и allowed=false.
+- Если в сообщении есть признаки немедленной опасности (суицид/самоповреждение/план причинить вред себе/другим) — label=crisis и allowed=true.
+
+Важно:
+- Если в сообщении есть код/SQL/технические детали, но СУТЬ запроса — психологическая (например, стресс/выгорание из-за работы) — это psychology, allowed=true.
+
+Верни ТОЛЬКО валидный JSON без пояснений.
+Схема:
+{
+  "allowed": boolean,
+  "label": "psychology" | "crisis" | "other",
+  "confidence": number, 0..1,
+  "refusal": string
+}
+
+Поле refusal:
+- Если allowed=false: 1–2 предложения отказа + как переформулировать в психологический запрос.
+- Если allowed=true: пустая строка.
+""".strip()
+
 SUMMARY_INSTRUCTIONS = """
 Сделай краткую выжимку переписки за день.
 Тон: нейтральный, без терапии и без оценок.
@@ -47,9 +81,65 @@ SUMMARY_INSTRUCTIONS = """
 """
 
 class OpenAIClient:
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, classifier_model: str | None = None):
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.classifier_model = classifier_model or model
+
+    @staticmethod
+    def _safe_json_loads(text: str) -> Dict[str, Any]:
+        """Пробуем распарсить JSON максимально мягко, но безопасно."""
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("empty")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Попробуем вытащить первый JSON-объект из текста
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(text[start : end + 1])
+            raise
+
+    def classify(self, user_text: str) -> Dict[str, Any]:
+        """Роутер: пускаем в психологический ответ только релевантные запросы.
+
+        Важно: не используем response_format / temperature, чтобы не упираться в ограничения моделей/SDK.
+        Просим вернуть ТОЛЬКО JSON, затем парсим.
+        """
+        resp = self.client.responses.create(
+            model=self.classifier_model,               # например gpt-5-mini
+            instructions=CLASSIFIER_INSTRUCTIONS,
+            input=user_text,
+        )
+
+        raw = getattr(resp, "output_text", "") or ""
+        try:
+            data = self._safe_json_loads(raw)
+        except Exception:
+            # Если классификатор сломался, лучше отказать, чем начать отвечать не по теме.
+            return {
+                "allowed": False,
+                "label": "other",
+                "confidence": 0.0,
+                "refusal": (
+                    "Я могу помогать только с психологическими вопросами. "
+                    "Опиши, что ты чувствуешь/переживаешь в этой ситуации, и я поддержу."
+                ),
+            }
+
+        allowed = bool(data.get("allowed", False))
+        label = data.get("label", "other")
+        conf = data.get("confidence", 0.0)
+        refusal = data.get("refusal", "")
+
+        return {
+            "allowed": allowed,
+            "label": label if label in {"psychology", "crisis", "other"} else "other",
+            "confidence": float(conf) if isinstance(conf, (int, float)) else 0.0,
+            "refusal": str(refusal or ""),
+        }
 
     def generate(self, user_text: str, *, mode: str = "chat") -> str:
         instructions = SYSTEM_PROMPT if mode == "chat" else SUMMARY_INSTRUCTIONS
