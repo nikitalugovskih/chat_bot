@@ -12,6 +12,16 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
   ban_until DATE
 );
 
+-- table #3
+CREATE TABLE IF NOT EXISTS users (
+  chat_id BIGINT PRIMARY KEY,
+  started_at TIMESTAMPTZ NOT NULL,
+  name TEXT,
+  gender TEXT,
+  age INTEGER,
+  consented SMALLINT NOT NULL DEFAULT 0
+);
+
 -- table #1
 CREATE TABLE IF NOT EXISTS requests_log (
   id BIGSERIAL PRIMARY KEY,

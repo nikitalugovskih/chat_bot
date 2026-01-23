@@ -2,12 +2,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Union, Any
 
-from app.db.models import RequestLog, UserSubscription
+from app.db.models import RequestLog, UserSubscription, UserProfile
 
 @dataclass
 class FakeDatabase:
     requests_log: List[RequestLog]
     user_subscriptions: Dict[int, UserSubscription]  # key = chat_id
+    users: Dict[int, UserProfile]  # key = chat_id
     _request_id_seq: int = 0
 
     def next_request_id(self) -> int:
@@ -20,7 +21,7 @@ async def get_db(use_fake: bool, dsn: str):
     Иначе -> asyncpg pool.
     """
     if use_fake:
-        return FakeDatabase(requests_log=[], user_subscriptions={}, _request_id_seq=0)
+        return FakeDatabase(requests_log=[], user_subscriptions={}, users={}, _request_id_seq=0)
 
     import asyncpg  # чтобы проект запускался без asyncpg, если FakeDB
     pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)

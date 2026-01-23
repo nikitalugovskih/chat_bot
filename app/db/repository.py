@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional, Tuple, Any, List
 
-from app.db.models import RequestLog, UserSubscription
+from app.db.models import RequestLog, UserSubscription, UserProfile
 from app.utils.time import today_msk, now_msk
 from app.services.limits import is_paid_active, is_banned
 
@@ -372,6 +372,30 @@ class Repository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch("SELECT chat_id FROM user_subscriptions")
             return [int(r["chat_id"]) for r in rows]
+
+    async def get_user_profile(self, chat_id: int) -> UserProfile | None:
+        if self._is_fake():
+            return self.db.users.get(chat_id)
+
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT chat_id, started_at, name, gender, age, consented
+                FROM users
+                WHERE chat_id=$1
+                """,
+                chat_id,
+            )
+            if not row:
+                return None
+            return UserProfile(
+                chat_id=row["chat_id"],
+                started_at=row["started_at"],
+                name=row["name"],
+                gender=row["gender"],
+                age=row["age"],
+                consented=row["consented"] or 0,
+            )
         
     async def log_payment_stars(self, chat_id: int, sp: Any) -> None:
         """
@@ -656,6 +680,75 @@ class Repository:
                     """,
                     chat_id, username, full_name
                 )
+
+    async def upsert_user_profile(
+        self,
+        *,
+        chat_id: int,
+        name: str | None,
+        gender: str | None,
+        age: int | None,
+        started_at: datetime,
+        consented: int | None = None,
+    ) -> None:
+        if self._is_fake():
+            existing = self.db.users.get(chat_id)
+            started_at_final = existing.started_at if existing else started_at
+            self.db.users[chat_id] = UserProfile(
+                chat_id=chat_id,
+                started_at=started_at_final,
+                name=name,
+                gender=gender,
+                age=age,
+                consented=consented if consented is not None else (existing.consented if existing else 0),
+            )
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users (chat_id, started_at, name, gender, age, consented)
+                VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0))
+                ON CONFLICT (chat_id) DO UPDATE
+                SET name=EXCLUDED.name,
+                    gender=EXCLUDED.gender,
+                    age=EXCLUDED.age,
+                    consented=GREATEST(users.consented, EXCLUDED.consented),
+                    started_at=users.started_at
+                """,
+                chat_id,
+                started_at,
+                name,
+                gender,
+                age,
+                consented,
+            )
+
+    async def set_user_consented(self, chat_id: int, started_at: datetime) -> None:
+        if self._is_fake():
+            existing = self.db.users.get(chat_id)
+            if existing:
+                existing.consented = 1
+            else:
+                self.db.users[chat_id] = UserProfile(
+                    chat_id=chat_id,
+                    started_at=started_at,
+                    consented=1,
+                )
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users (chat_id, started_at, consented)
+                VALUES ($1, $2, 1)
+                ON CONFLICT (chat_id) DO UPDATE
+                SET consented=1,
+                    started_at=users.started_at
+                """,
+                chat_id,
+                started_at,
+            )
 
     async def admin_delete_user(self, chat_id: int) -> None:
         """

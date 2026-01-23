@@ -1,7 +1,7 @@
 # /start, кнопки, сообщения
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.types import FSInputFile
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -13,12 +13,21 @@ from decimal import Decimal
 import uuid
 from app.services.yookassa_client import YooKassaClient, YooKassaConfig
 
-from app.bot.keyboards import start_keyboard, subscription_keyboard, pay_methods_keyboard, yookassa_pay_keyboard
+from app.bot.keyboards import (
+    start_keyboard,
+    chat_keyboard,
+    subscription_keyboard,
+    pay_methods_keyboard,
+    yookassa_pay_keyboard,
+    consent_keyboard,
+    gender_keyboard,
+    premium_keyboard,
+)
 from app.bot.states import ChatFlow
 
-from datetime import datetime
+from datetime import datetime, date
 
-from app.utils.time import today_msk
+from app.utils.time import today_msk, now_msk
 
 import logging
 import hashlib
@@ -33,16 +42,128 @@ LAST_STARS_INVOICE: dict[int, int] = {}
 from aiogram import F
 from aiogram.types import Message
 
+FAQ_TEXT = (
+    "❇️ Как я вообще работаю?\n"
+    "Привет 🙂\n"
+    "Я — дружелюбный чат-бот и собеседник, который всегда рядом, когда хочется выговориться, "
+    "разложить мысли по полочкам или просто поговорить. Я умею поддерживать диалог, задавать "
+    "уточняющие вопросы и помогать смотреть на ситуацию под разными углами.\n"
+    "Во время общения я стараюсь вникнуть в то, что с тобой происходит: уточняю детали, "
+    "размышляю вместе с тобой, предлагаю идеи и варианты, которые могут помочь именно в твоей ситуации. "
+    "Мои ответы не заготовлены заранее — каждый раз они формируются под твой запрос и твои слова.\n"
+    "Я могу помочь немного выдохнуть, успокоиться, навести порядок в голове и найти более спокойное состояние 😌\n"
+    "Можешь писать о чём угодно: о переживаниях, сомнениях, стрессе, сложных решениях, тревоге, "
+    "упадке настроения или просто когда хочется, чтобы тебя кто-то выслушал.\n"
+    "Моя задача — быть рядом, поддержать разговор и помочь тебе лучше понять себя и то, что происходит.\n"
+    "\n"
+    "❇️ Мои сообщения — это конфиденциально?\n"
+    "Да. Конфиденциальность — базовое правило.\n"
+    "Всё, что ты мне пишешь, остаётся только в рамках твоего Telegram-аккаунта. Никто посторонний не имеет доступа к переписке.\n"
+    "\n"
+    "❇️ Могу ли я заменить психолога?\n"
+    "Я — не психолог и не врач.\n"
+    "Я подойду как поддержка и «первая точка опоры»: когда нужно поговорить, выговориться, "
+    "получить внимание и идеи для размышлений.\n"
+    "Если ты сталкиваешься с действительно тяжёлыми состояниями или серьёзными проблемами, лучше обратиться к живому специалисту — "
+    "психологу или психотерапевту.\n"
+    "\n"
+    "❇️ Что даёт Premium-подписка?\n"
+    "Premium открывает общение без ограничений по количеству сообщений и возможность отправлять голосовые сообщения.\n"
+    "С подпиской ты можешь писать мне в любое время — днём, ночью, когда удобно. А ещё так ты поддерживаешь развитие бота, "
+    "помогая ему становиться полезнее и лучше 💛\n"
+    "\n"
+    "❇️ Куда писать, если есть вопросы по работе бота?\n"
+    "Если заметил ошибку, есть идеи, пожелания или вопросы — всегда можно написать в поддержку:\n"
+    "👉 @Psy_pocket_support\n"
+    "\n"
+    "❇️ Подписка продлевается автоматически?\n"
+    "Да, подписка продлевается автоматически. Оплата списывается за день до окончания текущего периода.\n"
+    "Автопродление можно отключить в любой момент:\n"
+    "Личный кабинет → Отменить подписку\n"
+    "\n"
+    "❇️ Как отменить подписку?\n"
+    "Зайди в личный кабинет и нажми кнопку «Отменить подписку»."
+)
+
+CONSENT_TEXT = (
+    "Хочу тебя заранее предупредить: я буду полезна тебе, если ты ищешь общения, "
+    "возможность выразить свои мысли и чувства, получить поддержку и внимание, "
+    "пути для решения собственных проблем 💡.\n"
+    "\n"
+    "Однако, если у тебя серьезные проблемы, то лучше обратиться к настоящему специалисту 👩‍⚕️.\n"
+    "\n"
+    "Ответь \"Да\"✅, если принимаешь условия."
+)
+
 # --- КНОПКИ ГЛАВНОГО МЕНЮ (reply keyboard) ---
 
 @router.message(F.text == "💬 Начать")
-async def btn_start_chat(message: Message, state: FSMContext):
-    await state.set_state(ChatFlow.chatting)
-    await message.answer("Ок, пишите сообщение — я отвечу 🙂")
+async def btn_start_chat(message: Message, state: FSMContext, repo):
+    await state.clear()
+    chat_id = message.chat.id
+    profile = await repo.get_user_profile(chat_id)
+    if profile and profile.consented == 1:
+        if profile.name and profile.gender and profile.age:
+            await state.set_state(ChatFlow.chatting)
+            await message.answer("Ок, пишите сообщение — я отвечу 🙂", reply_markup=chat_keyboard())
+            return
+        started_at = profile.started_at
+        await state.set_state(ChatFlow.waiting_name)
+        await state.update_data(started_at=started_at)
+        await message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
+        return
+
+    if not profile:
+        await repo.upsert_user_profile(
+            chat_id=chat_id,
+            name=None,
+            gender=None,
+            age=None,
+            started_at=now_msk(repo.tz),
+            consented=0,
+        )
+    await message.answer(CONSENT_TEXT, reply_markup=consent_keyboard())
 
 
-@router.message(F.text == "ℹ️ Подписка")
+def _format_ru_date(d: date) -> str:
+    months = [
+        "января",
+        "февраля",
+        "марта",
+        "апреля",
+        "мая",
+        "июня",
+        "июля",
+        "августа",
+        "сентября",
+        "октября",
+        "ноября",
+        "декабря",
+    ]
+    return f"{d.day} {months[d.month - 1]} {d.year} г."
+
+@router.message((F.text == "Личный Кабинет") | (F.text == "ℹ️ Подписка"))
 async def btn_subscription(message: Message, repo):
+    chat_id = message.chat.id
+    u = await repo.get_user(chat_id)
+    profile = await repo.get_user_profile(chat_id)
+
+    paid_text = "да ✅" if u.subscribe == 1 else "нет ❌"
+    left = "анлим" if u.num_request is None else str(u.num_request)
+    reg_date = _format_ru_date(profile.started_at.date()) if profile else "—"
+
+    text = (
+        f"📌 Статус подписки: {paid_text}\n"
+        f"📆 Дата (счётчики на день): {u.date}\n"
+        f"🔢 Запросов сегодня: {u.total_requests}\n"
+        f"🧾 Осталось запросов: {left}\n"
+        f"🆔 Твой ID: {chat_id}\n"
+        f"🗓️ Регистрация: {reg_date}\n"
+    )
+    await message.answer(text, reply_markup=subscription_keyboard())
+
+@router.message(F.text == "Премиум подписка")
+async def btn_premium(message: Message, repo):
     chat_id = message.chat.id
     u = await repo.get_user(chat_id)
 
@@ -50,18 +171,134 @@ async def btn_subscription(message: Message, repo):
     left = "анлим" if u.num_request is None else str(u.num_request)
 
     text = (
-        f"📌 Статус подписки: {paid_text}\n"
-        f"📆 Дата (счётчики на день): {u.date}\n"
-        f"🔢 Запросов сегодня: {u.total_requests}\n"
-        f"🧾 Осталось запросов: {left}\n"
+        "💎 Premium подписка дает тебе:\n\n"
+        "✨ Безлимитные сообщения\n"
+        "🤖 Улучшенная модель\n"
+        "🖼 Понимание фото\n"
+        "💡 Глубокий анализ проблемы\n"
+        "🔒 Повышенная анонимность\n"
+        "🚀 Высокая скорость работы\n"
+        "\n"
+        "Выбери способ оплаты:"
     )
-    await message.answer(text, reply_markup=subscription_keyboard())
+    await message.answer(text, reply_markup=premium_keyboard())
 
 
-@router.message(F.text == "🛟 Поддержка")
-async def btn_support(message: Message):
-    # переиспользуем то, что уже есть в /service
-    await cmd_service(message)
+
+@router.message((F.text == "Вопрос-Ответ") | (F.text == "❓ Вопрос-Ответ"))
+async def btn_faq(message: Message):
+    await message.answer(FAQ_TEXT)
+
+@router.message(F.text == "📄 Условия")
+async def btn_terms(message: Message):
+    text = (
+        "Мои алгоритмы запрещают разговоры на определенные темы. В частности, я не могу обсуждать "
+        "наркотики, оружие, призывы к любому насилию и селфхарму.\n"
+        "\n"
+        "Моя цель - свести к минимуму любые риски. Используя данный сервис, ты автоматически соглашаешься "
+        "с условиями использования по ссылке https://vk.com/wall-235516249_1"
+    )
+    await message.answer(text, disable_web_page_preview=True)
+
+@router.callback_query(F.data == "consent_yes")
+async def cb_consent_yes(call: CallbackQuery, state: FSMContext, repo):
+    chat_id = call.message.chat.id
+    profile = await repo.get_user_profile(chat_id)
+    started_at = profile.started_at if profile else now_msk(repo.tz)
+    await repo.set_user_consented(chat_id, started_at)
+
+    if profile and profile.name and profile.gender and profile.age:
+        await state.set_state(ChatFlow.chatting)
+        await call.message.edit_text("Ок, пишите сообщение — я отвечу 🙂")
+        return
+
+    await state.set_state(ChatFlow.waiting_name)
+    await state.update_data(started_at=started_at)
+    await call.message.edit_text("Как тебя зовут?")
+
+@router.message(F.text == "Да ✅")
+async def msg_consent_yes(message: Message, state: FSMContext, repo):
+    chat_id = message.chat.id
+    profile = await repo.get_user_profile(chat_id)
+    started_at = profile.started_at if profile else now_msk(repo.tz)
+    await repo.set_user_consented(chat_id, started_at)
+
+    if profile and profile.name and profile.gender and profile.age:
+        await state.set_state(ChatFlow.chatting)
+        await message.answer("Ок, пишите сообщение — я отвечу 🙂", reply_markup=chat_keyboard())
+        return
+
+    await state.set_state(ChatFlow.waiting_name)
+    await state.update_data(started_at=started_at)
+    await message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
+
+@router.message(ChatFlow.waiting_name)
+async def onboarding_name(message: Message, state: FSMContext):
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Напиши, пожалуйста, как тебя зовут.")
+        return
+    await state.update_data(name=name)
+    await state.set_state(ChatFlow.waiting_gender)
+    await message.answer("Твой пол?", reply_markup=gender_keyboard())
+
+@router.message(ChatFlow.waiting_gender)
+async def onboarding_gender(message: Message, state: FSMContext):
+    raw = (message.text or "").strip().lower()
+    if raw in {"м", "муж", "мужской"}:
+        gender = "М"
+    elif raw in {"ж", "жен", "женский"}:
+        gender = "Ж"
+    elif raw in {"другое", "иной", "другой"}:
+        gender = "Другое"
+    else:
+        await message.answer("Выбери вариант из кнопок: М / Ж / Другое.", reply_markup=gender_keyboard())
+        return
+
+    await state.update_data(gender=gender)
+    await state.set_state(ChatFlow.waiting_age)
+    await message.answer("Сколько тебе лет? Введи число.", reply_markup=ReplyKeyboardRemove())
+
+@router.message(ChatFlow.waiting_age)
+async def onboarding_age(message: Message, state: FSMContext, repo):
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Нужна цифра. Например: 25.")
+        return
+    age = int(raw)
+    if age < 1 or age > 120:
+        await message.answer("Возраст должен быть от 1 до 120. Попробуй ещё раз.")
+        return
+
+    data = await state.get_data()
+    name = data.get("name")
+    gender = data.get("gender")
+    started_at = data.get("started_at") or now_msk(repo.tz)
+
+    await repo.upsert_user_profile(
+        chat_id=message.chat.id,
+        name=name,
+        gender=gender,
+        age=age,
+        started_at=started_at,
+        consented=1,
+    )
+
+    await state.set_state(ChatFlow.chatting)
+    await message.answer("Ок, пишите сообщение — я отвечу 🙂", reply_markup=chat_keyboard())
+
+@router.message((F.text == "👋 Завершить диалог") | (F.text == "Завершить диалог"))
+async def btn_end_chat(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Диалог завершен. Можешь начать новый в любое время.", reply_markup=start_keyboard())
+
+@router.callback_query(F.data == "profile_edit")
+async def cb_profile_edit(call: CallbackQuery, state: FSMContext, repo):
+    await call.answer()
+    profile = await repo.get_user_profile(call.message.chat.id)
+    await state.set_state(ChatFlow.waiting_name)
+    await state.update_data(started_at=profile.started_at if profile else now_msk(repo.tz))
+    await call.message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
 
 # payload для счета
 def make_payload(chat_id: int) -> str:
@@ -144,7 +381,7 @@ async def cmd_start(message: Message, repo, state: FSMContext):
     text = (
         "Привет! 👋\n"
         "Я чат-бот компаньон! Нажми «Начать», чтобы запустить чат со мной.\n"
-        "Или «Подписка», чтобы посмотреть лимиты/оплату.\n"
+        "Или «Личный кабинет», чтобы посмотреть лимиты/оплату.\n"
         "Если нужна поддержка, жми «Поддержка».\n"
     )
     await message.answer(text, reply_markup=start_keyboard())
@@ -248,9 +485,9 @@ async def cb_pay(call: CallbackQuery, repo, settings):
 
 @router.callback_query(F.data == "pay_methods:back")
 async def cb_pay_methods_back(call: CallbackQuery, repo):
-    # возвращаемся к экрану "Подписка" (текущий текст пересоздавать не будем — только клаву)
+    # возвращаемся к экрану "Премиум подписка" (текущий текст пересоздавать не будем — только клаву)
     await call.answer()
-    await call.message.edit_reply_markup(reply_markup=subscription_keyboard())
+    await call.message.edit_reply_markup(reply_markup=premium_keyboard())
 
 @router.callback_query(F.data == "pay_method:stars")
 async def cb_pay_method_stars(call: CallbackQuery, repo):

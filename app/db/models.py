@@ -37,3 +37,12 @@ class UserSubscription:
 
     username: str | None = None
     full_name: str | None = None
+
+@dataclass
+class UserProfile:
+    chat_id: int
+    started_at: datetime
+    name: str | None = None
+    gender: str | None = None
+    age: int | None = None
+    consented: int = 0

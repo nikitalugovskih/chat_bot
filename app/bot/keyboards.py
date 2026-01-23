@@ -10,18 +10,51 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def start_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="💬 Начать"), KeyboardButton(text="ℹ️ Подписка")],
-            [KeyboardButton(text="🛟 Поддержка")],
+            [KeyboardButton(text="💬 Начать"), KeyboardButton(text="Личный Кабинет")],
+            [KeyboardButton(text="❓ Вопрос-Ответ"), KeyboardButton(text="📄 Условия")],
+            [KeyboardButton(text="Премиум подписка")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выбери действие 👇",
     )
 
+def chat_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👋 Завершить диалог")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+        input_field_placeholder="Выбери действие 👇",
+    )
+
 def subscription_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплата (30 дней)", callback_data="pay_30d")],
+        [InlineKeyboardButton(text="✏️ Сменить имя", callback_data="profile_edit")],
         # [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
     ])
+
+def premium_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐️ Оплата Stars", callback_data="pay_method:stars")],
+        [InlineKeyboardButton(text="💳 YooKassa", callback_data="pay_method:card")],
+        # [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+    ])
+
+def consent_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Да ✅", callback_data="consent_yes")],
+    ])
+
+def gender_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="М"), KeyboardButton(text="Ж"), KeyboardButton(text="Другое")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+        input_field_placeholder="Выбери вариант 👇",
+    )
 
 
 def pay_methods_keyboard() -> InlineKeyboardMarkup:

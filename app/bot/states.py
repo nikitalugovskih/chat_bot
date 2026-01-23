@@ -4,6 +4,9 @@ from aiogram.fsm.state import State, StatesGroup
 
 class ChatFlow(StatesGroup):
     chatting = State()
+    waiting_name = State()
+    waiting_gender = State()
+    waiting_age = State()
 
 class AdminFlow(StatesGroup):
     waiting_chat_id_for_check = State()
