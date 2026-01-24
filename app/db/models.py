@@ -46,3 +46,5 @@ class UserProfile:
     gender: str | None = None
     age: int | None = None
     consented: int = 0
+    memory: str | None = None
+    end_dialog: int = 0

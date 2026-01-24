@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   gender TEXT,
   age INTEGER,
-  consented SMALLINT NOT NULL DEFAULT 0
+  consented SMALLINT NOT NULL DEFAULT 0,
+  memory TEXT,
+  end_dialog SMALLINT NOT NULL DEFAULT 0
 );
 
 -- table #1

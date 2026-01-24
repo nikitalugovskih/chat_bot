@@ -293,6 +293,57 @@ class Repository:
                     summary=row["summary"],
                 )
 
+    async def get_recent_user_inputs(self, chat_id: int, limit: int = 5) -> List[str]:
+        if limit <= 0:
+            return []
+        if self._is_fake():
+            items = [r for r in self.db.requests_log if r.chat_id == chat_id and (r.input or "").strip()]
+            items.sort(key=lambda r: r.date)
+            recent = items[-limit:]
+            return [r.input for r in recent]
+
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT input
+                FROM requests_log
+                WHERE chat_id=$1 AND input IS NOT NULL AND input <> ''
+                ORDER BY date DESC
+                LIMIT $2
+                """,
+                chat_id,
+                limit,
+            )
+            return [r["input"] for r in reversed(rows)]
+
+    async def get_recent_dialog_pairs(self, chat_id: int, limit: int = 5) -> List[tuple[str, str]]:
+        if limit <= 0:
+            return []
+        if self._is_fake():
+            items = [
+                r for r in self.db.requests_log
+                if r.chat_id == chat_id and (r.input or "").strip() and (r.output or "").strip()
+            ]
+            items.sort(key=lambda r: r.date)
+            recent = items[-limit:]
+            return [(r.input, r.output) for r in recent]
+
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT input, output
+                FROM requests_log
+                WHERE chat_id=$1
+                  AND input IS NOT NULL AND input <> ''
+                  AND output IS NOT NULL AND output <> ''
+                ORDER BY date DESC
+                LIMIT $2
+                """,
+                chat_id,
+                limit,
+            )
+            return [(r["input"], r["output"]) for r in reversed(rows)]
+
     async def get_day_dialog_text(self, chat_id: int) -> str:
         day = today_msk(self.tz)
         start, end = _day_bounds(self.tz, day)
@@ -380,7 +431,7 @@ class Repository:
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT chat_id, started_at, name, gender, age, consented
+                SELECT chat_id, started_at, name, gender, age, consented, memory, end_dialog
                 FROM users
                 WHERE chat_id=$1
                 """,
@@ -395,6 +446,8 @@ class Repository:
                 gender=row["gender"],
                 age=row["age"],
                 consented=row["consented"] or 0,
+                memory=row["memory"],
+                end_dialog=row["end_dialog"] or 0,
             )
         
     async def log_payment_stars(self, chat_id: int, sp: Any) -> None:
@@ -701,6 +754,8 @@ class Repository:
                 gender=gender,
                 age=age,
                 consented=consented if consented is not None else (existing.consented if existing else 0),
+                memory=existing.memory if existing else None,
+                end_dialog=existing.end_dialog if existing else 0,
             )
             return
 
@@ -714,7 +769,9 @@ class Repository:
                     gender=EXCLUDED.gender,
                     age=EXCLUDED.age,
                     consented=GREATEST(users.consented, EXCLUDED.consented),
-                    started_at=users.started_at
+                    started_at=users.started_at,
+                    memory=users.memory,
+                    end_dialog=users.end_dialog
                 """,
                 chat_id,
                 started_at,
@@ -749,6 +806,72 @@ class Repository:
                 chat_id,
                 started_at,
             )
+
+    async def set_user_memory(self, chat_id: int, memory: str) -> None:
+        memory = (memory or "").strip()
+        if self._is_fake():
+            existing = self.db.users.get(chat_id)
+            if existing:
+                existing.memory = memory
+            else:
+                self.db.users[chat_id] = UserProfile(
+                    chat_id=chat_id,
+                    started_at=now_msk(self.tz),
+                    consented=0,
+                    memory=memory,
+                )
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users (chat_id, started_at, memory)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (chat_id) DO UPDATE
+                SET memory=EXCLUDED.memory,
+                    started_at=users.started_at
+                """,
+                chat_id,
+                now_msk(self.tz),
+                memory,
+            )
+
+    async def set_end_dialog(self, chat_id: int, value: int) -> None:
+        val = 1 if value else 0
+        if self._is_fake():
+            existing = self.db.users.get(chat_id)
+            if existing:
+                existing.end_dialog = val
+            else:
+                self.db.users[chat_id] = UserProfile(
+                    chat_id=chat_id,
+                    started_at=now_msk(self.tz),
+                    consented=0,
+                    end_dialog=val,
+                )
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users (chat_id, started_at, end_dialog)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (chat_id) DO UPDATE
+                SET end_dialog=EXCLUDED.end_dialog,
+                    started_at=users.started_at
+                """,
+                chat_id,
+                now_msk(self.tz),
+                val,
+            )
+
+    async def clear_dialog_context(self, chat_id: int) -> None:
+        if self._is_fake():
+            self.db.requests_log = [r for r in self.db.requests_log if r.chat_id != chat_id]
+            return
+
+        async with self.db.acquire() as conn:
+            await conn.execute("DELETE FROM requests_log WHERE chat_id=$1", chat_id)
 
     async def admin_delete_user(self, chat_id: int) -> None:
         """

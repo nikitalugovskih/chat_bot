@@ -34,6 +34,8 @@ import hashlib
 
 import asyncio
 
+from app.services.summary import build_memory
+
 logger = logging.getLogger("bot")
 
 router = Router()
@@ -95,6 +97,14 @@ CONSENT_TEXT = (
     "Ответь \"Да\"✅, если принимаешь условия."
 )
 
+PERSONALIZATION_TEXT = (
+    "Когда ты делишься своим именем, возрастом и полом, мне легче подстроиться под тебя 👧.\n"
+    "\n"
+    "Имя помогает общаться более лично и дружелюбно.\n"
+    "Возраст и пол дают возможность выбирать уместный тон и формы речи.\n"
+    "Так наше общение становится комфортнее и естественнее."
+)
+
 # --- КНОПКИ ГЛАВНОГО МЕНЮ (reply keyboard) ---
 
 @router.message(F.text == "💬 Начать")
@@ -102,6 +112,9 @@ async def btn_start_chat(message: Message, state: FSMContext, repo):
     await state.clear()
     chat_id = message.chat.id
     profile = await repo.get_user_profile(chat_id)
+    if profile and profile.end_dialog == 1:
+        await repo.clear_dialog_context(chat_id)
+        await repo.set_end_dialog(chat_id, 0)
     if profile and profile.consented == 1:
         if profile.name and profile.gender and profile.age:
             await state.set_state(ChatFlow.chatting)
@@ -110,7 +123,10 @@ async def btn_start_chat(message: Message, state: FSMContext, repo):
         started_at = profile.started_at
         await state.set_state(ChatFlow.waiting_name)
         await state.update_data(started_at=started_at)
-        await message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            PERSONALIZATION_TEXT + "\n\nКак тебя зовут?",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return
 
     if not profile:
@@ -206,6 +222,7 @@ async def cb_consent_yes(call: CallbackQuery, state: FSMContext, repo):
     profile = await repo.get_user_profile(chat_id)
     started_at = profile.started_at if profile else now_msk(repo.tz)
     await repo.set_user_consented(chat_id, started_at)
+    await repo.set_end_dialog(chat_id, 0)
 
     if profile and profile.name and profile.gender and profile.age:
         await state.set_state(ChatFlow.chatting)
@@ -214,7 +231,7 @@ async def cb_consent_yes(call: CallbackQuery, state: FSMContext, repo):
 
     await state.set_state(ChatFlow.waiting_name)
     await state.update_data(started_at=started_at)
-    await call.message.edit_text("Как тебя зовут?")
+    await call.message.edit_text(PERSONALIZATION_TEXT + "\n\nКак тебя зовут?")
 
 @router.message(F.text == "Да ✅")
 async def msg_consent_yes(message: Message, state: FSMContext, repo):
@@ -222,6 +239,7 @@ async def msg_consent_yes(message: Message, state: FSMContext, repo):
     profile = await repo.get_user_profile(chat_id)
     started_at = profile.started_at if profile else now_msk(repo.tz)
     await repo.set_user_consented(chat_id, started_at)
+    await repo.set_end_dialog(chat_id, 0)
 
     if profile and profile.name and profile.gender and profile.age:
         await state.set_state(ChatFlow.chatting)
@@ -230,7 +248,10 @@ async def msg_consent_yes(message: Message, state: FSMContext, repo):
 
     await state.set_state(ChatFlow.waiting_name)
     await state.update_data(started_at=started_at)
-    await message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        PERSONALIZATION_TEXT + "\n\nКак тебя зовут?",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 @router.message(ChatFlow.waiting_name)
 async def onboarding_name(message: Message, state: FSMContext):
@@ -283,14 +304,16 @@ async def onboarding_age(message: Message, state: FSMContext, repo):
         started_at=started_at,
         consented=1,
     )
+    await repo.set_end_dialog(message.chat.id, 0)
 
     await state.set_state(ChatFlow.chatting)
     await message.answer("Ок, пишите сообщение — я отвечу 🙂", reply_markup=chat_keyboard())
 
 @router.message((F.text == "👋 Завершить диалог") | (F.text == "Завершить диалог"))
-async def btn_end_chat(message: Message, state: FSMContext):
+async def btn_end_chat(message: Message, state: FSMContext, repo):
     await state.clear()
     await message.answer("Диалог завершен. Можешь начать новый в любое время.", reply_markup=start_keyboard())
+    await repo.set_end_dialog(message.chat.id, 1)
 
 @router.callback_query(F.data == "profile_edit")
 async def cb_profile_edit(call: CallbackQuery, state: FSMContext, repo):
@@ -298,7 +321,10 @@ async def cb_profile_edit(call: CallbackQuery, state: FSMContext, repo):
     profile = await repo.get_user_profile(call.message.chat.id)
     await state.set_state(ChatFlow.waiting_name)
     await state.update_data(started_at=profile.started_at if profile else now_msk(repo.tz))
-    await call.message.answer("Как тебя зовут?", reply_markup=ReplyKeyboardRemove())
+    await call.message.answer(
+        PERSONALIZATION_TEXT + "\n\nКак тебя зовут?",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 # payload для счета
 def make_payload(chat_id: int) -> str:
@@ -707,9 +733,14 @@ async def cb_back(call: CallbackQuery, state: FSMContext):
     )
 
 @router.message(ChatFlow.chatting)
-async def on_chat_message(message: Message, repo, llm):
+async def on_chat_message(message: Message, repo, llm, memory_llm):
     chat_id = message.chat.id
     user_text = message.text or ""
+    profile = await repo.get_user_profile(chat_id)
+    user_name = profile.name if profile else None
+    user_gender = profile.gender if profile else None
+    user_age = profile.age if profile else None
+    user_memory = profile.memory if profile else None
 
     await repo.touch_user_profile(
         chat_id=chat_id,
@@ -723,17 +754,7 @@ async def on_chat_message(message: Message, repo, llm):
         await message.answer(reason, reply_markup=subscription_keyboard())
         return
 
-    # --- SCOPE GATE (универсальное ограничение: отвечаем только про психологию) ---
-    # Не вызываем основной LLM-ответ, если запрос вне домена.
-    scope = await asyncio.to_thread(llm.classify, user_text)
-    if not scope.get("allowed", False):
-        refusal = scope.get("refusal") or (
-            "Я могу помогать только с психологическими вопросами. "
-            "Опиши, что ты чувствуешь/переживаешь в этой ситуации, и я поддержу."
-        )
-        await repo.record_interaction_atomic(chat_id, user_text, refusal)
-        await message.answer(refusal)
-        return
+    # Router disabled: отвечаем на все запросы без отсева.
 
     # LLM
     loading_sticker = None
@@ -742,7 +763,10 @@ async def on_chat_message(message: Message, repo, llm):
     try:
         # 1) показываем анимированный стикер + текст
         # loading_sticker = await message.answer_sticker(FSInputFile("app/assets/loader.tgs"))
-        loading_text = await message.answer("🎲 Получил ваш запрос, думаю, как вам помочь…")
+        if user_name:
+            loading_text = await message.answer(f"🙏 {user_name}, получил твой запрос, думаю, как тебе помочь…")
+        else:
+            loading_text = await message.answer("🎲 Получил ваш запрос, думаю, как вам помочь…")
 
         # 2) твой лог + генерация
         prompt_text = getattr(__import__("app.services.openai_client", fromlist=["SYSTEM_PROMPT"]), "SYSTEM_PROMPT", "")
@@ -760,7 +784,24 @@ async def on_chat_message(message: Message, repo, llm):
             (user_text[:300].replace("\n", " ")),
         )
 
-        answer = await asyncio.to_thread(llm.generate, user_text)
+        prompt_input = user_text
+
+        logger.info(
+            "chat_id=%s | memory_len=%s | context_len=%s | prompt_preview='%s'",
+            chat_id,
+            len(user_memory or ""),
+            len(prompt_input),
+            prompt_input[:500].replace("\n", " "),
+        )
+
+        answer = await asyncio.to_thread(
+            llm.generate,
+            prompt_input,
+            user_name=user_name,
+            user_gender=user_gender,
+            user_age=user_age,
+            user_memory=user_memory,
+        )
 
     except Exception as e:
         await message.answer(f"⚠️ Ошибка при обработке: {e}")
@@ -777,5 +818,12 @@ async def on_chat_message(message: Message, repo, llm):
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)
+    try:
+        turn_text = f"USER: {user_text}\nBOT: {answer}"
+        updated_memory = build_memory(memory_llm, turn_text, existing_memory=user_memory)
+        if updated_memory and updated_memory != (user_memory or "").strip():
+            await repo.set_user_memory(chat_id, updated_memory)
+    except Exception:
+        logger.exception("Failed to update user memory", extra={"chat_id": chat_id})
 
     await message.answer(answer)

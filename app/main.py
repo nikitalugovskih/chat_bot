@@ -37,11 +37,13 @@ async def main():
         daily_hard_limit=settings.daily_hard_limit,
     )
 
-    classifier_model = settings.openai_classifier_model or None
     llm = OpenAIClient(
         api_key=settings.openai_api_key,
         model=settings.openai_model,                 # gpt-5
-        classifier_model=classifier_model,           # gpt-5-mini (если задано в env)
+    )
+    memory_llm = OpenAIClient(
+        api_key=settings.openai_api_key,
+        model=settings.openai_memory_model,          # gpt-5-mini
     )
 
 
@@ -49,6 +51,7 @@ async def main():
     async def inject(handler, event, data):
         data["repo"] = repo
         data["llm"] = llm
+        data["memory_llm"] = memory_llm
         data["settings"] = settings
         return await handler(event, data)
 
@@ -60,6 +63,7 @@ async def main():
             dialog = await repo.get_day_dialog_text(chat_id)
             summary = build_summary(llm, dialog)
             await repo.save_daily_summary(chat_id, summary)
+            # daily summary only; memory is updated per-message
 
     scheduler.add_job(daily_job, CronTrigger(hour=0, minute=0))
     scheduler.start()

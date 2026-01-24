@@ -1,9 +1,6 @@
-import json
-from typing import Any, Dict
-
 from openai import OpenAI
 
-PROMPT_VERSION = "psy_v2"
+PROMPT_VERSION = "psy_v3"
 
 SYSTEM_PROMPT = """
 Ты - психолог, психоаналитик (не врач) и близкий друг-компаньон.
@@ -32,106 +29,70 @@ SYSTEM_PROMPT = """
 Общайся на русском языке.
 """.strip()
 
-# --- Router / scope classifier ---
-# Отдельный шаг перед генерацией ответа: решаем "психология это или нет".
-# Это универсально: мы НЕ перечисляем все темы мира; мы разрешаем только психологию.
-
-CLASSIFIER_INSTRUCTIONS = """
-Ты — строгий классификатор входящих сообщений для чат-бота психолога.
-
-Задача: определить, относится ли запрос к психологии/самопомощи/эмоциям/отношениям/поведению/саморефлексии.
-
-Правила:
-- allowed=true ТОЛЬКО если пользователь просит психологическую помощь (эмоции, стресс, отношения, самооценка, привычки, границы, выгорание, коммуникация, саморефлексия и т.п.).
-- Если пользователь просит экспертную помощь в другой области (программирование, SQL, маркетинг, бытовые советы, строительство/бетон, медицина, юриспруденция, финансы и т.п.) — это other и allowed=false.
-- Если в сообщении есть признаки немедленной опасности (суицид/самоповреждение/план причинить вред себе/другим) — label=crisis и allowed=true.
-
-Важно:
-- Если в сообщении есть код/SQL/технические детали, но СУТЬ запроса — психологическая (например, стресс/выгорание из-за работы) — это psychology, allowed=true.
-
-Верни ТОЛЬКО валидный JSON без пояснений.
-Схема:
-{
-  "allowed": boolean,
-  "label": "psychology" | "crisis" | "other",
-  "confidence": number, 0..1,
-  "refusal": string
-}
-
-Поле refusal:
-- Если allowed=false: 1–2 предложения отказа + как переформулировать в психологический запрос.
-- Если allowed=true: пустая строка.
-""".strip()
-
 SUMMARY_INSTRUCTIONS = """
 Сделай краткую выжимку переписки за день.
 Тон: нейтральный, без терапии и без оценок.
 Формат: 3–6 буллетов.
 """
 
+MEMORY_INSTRUCTIONS = """
+Ты обновляешь краткую память о пользователе на основе его переписки.
+Задача: сохранить устойчивые факты/предпочтения/темы/триггеры/цели, которые помогают вести диалог.
+Пиши кратко, 3–8 буллетов. Без длинных историй.
+Не пересказывай травматичный опыт подробно — только нейтральные факты.
+Не выдумывай и не делай диагнозов. Если информации мало — оставь память как есть.
+Выводи только буллеты, без заголовков и пояснений.
+""".strip()
+
 class OpenAIClient:
-    def __init__(self, api_key: str, model: str, classifier_model: str | None = None):
+    def __init__(self, api_key: str, model: str):
         self.client = OpenAI(api_key=api_key)
         self.model = model
-        self.classifier_model = classifier_model or model
 
-    @staticmethod
-    def _safe_json_loads(text: str) -> Dict[str, Any]:
-        """Пробуем распарсить JSON максимально мягко, но безопасно."""
-        text = (text or "").strip()
-        if not text:
-            raise ValueError("empty")
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Попробуем вытащить первый JSON-объект из текста
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                return json.loads(text[start : end + 1])
-            raise
-
-    def classify(self, user_text: str) -> Dict[str, Any]:
-        """Роутер: пускаем в психологический ответ только релевантные запросы.
-
-        Важно: не используем response_format / temperature, чтобы не упираться в ограничения моделей/SDK.
-        Просим вернуть ТОЛЬКО JSON, затем парсим.
-        """
-        resp = self.client.responses.create(
-            model=self.classifier_model,               # например gpt-5-mini
-            instructions=CLASSIFIER_INSTRUCTIONS,
-            input=user_text,
-        )
-
-        raw = getattr(resp, "output_text", "") or ""
-        try:
-            data = self._safe_json_loads(raw)
-        except Exception:
-            # Если классификатор сломался, лучше отказать, чем начать отвечать не по теме.
-            return {
-                "allowed": False,
-                "label": "other",
-                "confidence": 0.0,
-                "refusal": (
-                    "Я могу помогать только с психологическими вопросами. "
-                    "Опиши, что ты чувствуешь/переживаешь в этой ситуации, и я поддержу."
-                ),
-            }
-
-        allowed = bool(data.get("allowed", False))
-        label = data.get("label", "other")
-        conf = data.get("confidence", 0.0)
-        refusal = data.get("refusal", "")
-
-        return {
-            "allowed": allowed,
-            "label": label if label in {"psychology", "crisis", "other"} else "other",
-            "confidence": float(conf) if isinstance(conf, (int, float)) else 0.0,
-            "refusal": str(refusal or ""),
-        }
-
-    def generate(self, user_text: str, *, mode: str = "chat") -> str:
-        instructions = SYSTEM_PROMPT if mode == "chat" else SUMMARY_INSTRUCTIONS
+    def generate(
+        self,
+        user_text: str,
+        *,
+        mode: str = "chat",
+        user_name: str | None = None,
+        user_gender: str | None = None,
+        user_age: int | None = None,
+        user_memory: str | None = None,
+    ) -> str:
+        if mode == "summary":
+            instructions = SUMMARY_INSTRUCTIONS
+        elif mode == "memory":
+            instructions = MEMORY_INSTRUCTIONS
+        else:
+            instructions = SYSTEM_PROMPT
+        if mode == "chat":
+            clean_name = " ".join(str(user_name).split()).strip()[:60] if user_name else ""
+            clean_gender = " ".join(str(user_gender).split()).strip()[:20] if user_gender else ""
+            clean_age = int(user_age) if isinstance(user_age, int) else None
+            details = []
+            if clean_name:
+                details.append(f"- Имя пользователя: {clean_name}")
+            if clean_gender:
+                details.append(f"- Пол пользователя: {clean_gender}")
+            if clean_age is not None:
+                details.append(f"- Возраст пользователя: {clean_age}")
+            if details:
+                instructions = (
+                    f"{instructions}\n\n"
+                    "Персонализация:\n"
+                    + "\n".join(details)
+                    + "\n- Подстраивай тон и формы речи под имя/пол/возраст. "
+                      "Обращайся по имени, когда уместно, без чрезмерного повторения."
+                )
+        if mode == "chat" and user_memory:
+            clean_memory = " ".join(str(user_memory).split())
+            clean_memory = clean_memory.strip()[:1200]
+            if clean_memory:
+                instructions = (
+                    f"{instructions}\n\n"
+                    "Краткая память о пользователе (используй как контекст, не пересказывай буквально):\n"
+                    f"{clean_memory}"
+                )
 
         resp = self.client.responses.create(
             model=self.model,
