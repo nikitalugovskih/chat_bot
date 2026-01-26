@@ -1,6 +1,7 @@
 # /start, кнопки, сообщения
 
 from aiogram import Router, F
+from aiogram.enums import ChatAction
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.types import FSInputFile
 from aiogram.filters import CommandStart
@@ -31,7 +32,7 @@ from app.utils.time import today_msk, now_msk
 
 import logging
 import hashlib
-
+import contextlib
 import asyncio
 
 from app.services.summary import build_memory
@@ -40,6 +41,48 @@ logger = logging.getLogger("bot")
 
 router = Router()
 LAST_STARS_INVOICE: dict[int, int] = {}
+
+async def _typing_loop(bot, chat_id: int, interval: float = 3.5):
+    try:
+        while True:
+            await bot.send_chat_action(chat_id, ChatAction.TYPING)
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        return
+
+async def _update_memory_bg(repo, memory_llm, chat_id: int, user_text: str, answer: str, user_memory: str | None):
+    try:
+        turn_text = f"USER: {user_text}\nBOT: {answer}"
+        updated_memory = await asyncio.to_thread(
+            build_memory,
+            memory_llm,
+            turn_text,
+            existing_memory=user_memory,
+        )
+        if updated_memory and updated_memory != (user_memory or "").strip():
+            await repo.set_user_memory(chat_id, updated_memory)
+    except Exception:
+        logger.exception("Failed to update user memory", extra={"chat_id": chat_id})
+
+def _split_response(text: str, max_len: int = 300) -> list[str]:
+    t = (text or "").strip()
+    if not t:
+        return []
+    # split by paragraphs; keep bullets grouped if possible
+    paragraphs = [p.strip() for p in t.split("\n\n") if p.strip()]
+    parts: list[str] = []
+    buf = ""
+    for p in paragraphs:
+        candidate = (buf + "\n\n" + p).strip() if buf else p
+        if len(candidate) <= max_len:
+            buf = candidate
+        else:
+            if buf:
+                parts.append(buf)
+            buf = p
+    if buf:
+        parts.append(buf)
+    return parts
 
 from aiogram import F
 from aiogram.types import Message
@@ -760,8 +803,10 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
     loading_sticker = None
     loading_text = None
 
+    typing_task = None
     try:
-        # 1) показываем анимированный стикер + текст
+        # 1) показываем "печатает..." + текст
+        typing_task = asyncio.create_task(_typing_loop(message.bot, chat_id))
         # loading_sticker = await message.answer_sticker(FSInputFile("app/assets/loader.tgs"))
         if user_name:
             loading_text = await message.answer(f"🙏 {user_name}, получил твой запрос, думаю, как тебе помочь…")
@@ -802,6 +847,24 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
             user_age=user_age,
             user_memory=user_memory,
         )
+        if not (answer or "").strip():
+            # one retry with minimal context to avoid empty replies
+            retry_input = f"Коротко и по делу ответь пользователю:\n{user_text}"
+            answer = await asyncio.to_thread(
+                llm.generate,
+                retry_input,
+                user_name=user_name,
+                user_gender=user_gender,
+                user_age=user_age,
+                user_memory=None,
+            )
+        if not (answer or "").strip():
+            answer = (
+                "Понял. Давай коротко и по делу:\n"
+                "- Что случилось?\n"
+                "- Что ты хочешь получить от ответа прямо сейчас?\n"
+                "Если сложно, напиши одной фразой — разберём вместе."
+            )
 
     except Exception as e:
         await message.answer(f"⚠️ Ошибка при обработке: {e}")
@@ -819,11 +882,24 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)
     try:
-        turn_text = f"USER: {user_text}\nBOT: {answer}"
-        updated_memory = build_memory(memory_llm, turn_text, existing_memory=user_memory)
-        if updated_memory and updated_memory != (user_memory or "").strip():
-            await repo.set_user_memory(chat_id, updated_memory)
+        u = await repo.get_user(chat_id)
+        if (u.total_requests % 5) == 0:
+            asyncio.create_task(
+                _update_memory_bg(repo, memory_llm, chat_id, user_text, answer, user_memory)
+            )
     except Exception:
-        logger.exception("Failed to update user memory", extra={"chat_id": chat_id})
+        logger.exception("Failed to schedule memory update", extra={"chat_id": chat_id})
 
-    await message.answer(answer)
+    parts = _split_response(answer, max_len=800)
+    if not parts:
+        parts = ["Понял. Давай коротко и по делу: что случилось?"]
+    for i, part in enumerate(parts):
+        if typing_task and typing_task.done() is False:
+            await message.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        await message.answer(part)
+        if i < len(parts) - 1:
+            await asyncio.sleep(4.0)
+    if typing_task:
+        typing_task.cancel()
+        with contextlib.suppress(Exception):
+            await typing_task

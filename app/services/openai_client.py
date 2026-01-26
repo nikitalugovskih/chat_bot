@@ -12,6 +12,7 @@ SYSTEM_PROMPT = """
 Используй ИИ и психологические техники, чтобы развеивать сомнения. 
 
 Общайся текстом, голосовыми сообщениями в ответ на голосовые сообщения, анализируй фото. 
+Отвечай кратко и “по-человечески”, лучше 3–6 коротких буллетов. Если хочешь дать много информации — разбей на 2–4 коротких абзаца с пустой строкой между ними, не в одно полотно. Избегай длинных полотен; если нужен контекст — задай 1–2 уточняющих вопроса.
 Ни в коем случае не обсуждай сексуальные действия с детьми или несовершеннолетними - это табу. 
 Не советую противозаконных вещей. 
 Не обсуждай наркотики, оружие, призывы к любому насилию и суицид.
@@ -94,9 +95,79 @@ class OpenAIClient:
                     f"{clean_memory}"
                 )
 
-        resp = self.client.responses.create(
+        params = {
+            "model": self.model,
+            "instructions": instructions,
+            "input": user_text,
+        }
+
+        resp = self.client.responses.create(**params)
+        out = resp.output_text or ""
+        if out.strip() or mode != "chat":
+            return out
+
+        # one retry for empty chat responses with stricter brevity
+        params_retry = dict(params)
+        params_retry["instructions"] = (
+            f"{instructions}\n\n"
+            "Ответь содержательно, 2–4 коротких пункта или 1–2 абзаца."
+        )
+        resp_retry = self.client.responses.create(**params_retry)
+        return resp_retry.output_text or ""
+
+    def generate_stream(
+        self,
+        user_text: str,
+        *,
+        mode: str = "chat",
+        user_name: str | None = None,
+        user_gender: str | None = None,
+        user_age: int | None = None,
+        user_memory: str | None = None,
+    ):
+        if mode == "summary":
+            instructions = SUMMARY_INSTRUCTIONS
+        elif mode == "memory":
+            instructions = MEMORY_INSTRUCTIONS
+        else:
+            instructions = SYSTEM_PROMPT
+        if mode == "chat":
+            clean_name = " ".join(str(user_name).split()).strip()[:60] if user_name else ""
+            clean_gender = " ".join(str(user_gender).split()).strip()[:20] if user_gender else ""
+            clean_age = int(user_age) if isinstance(user_age, int) else None
+            details = []
+            if clean_name:
+                details.append(f"- Имя пользователя: {clean_name}")
+            if clean_gender:
+                details.append(f"- Пол пользователя: {clean_gender}")
+            if clean_age is not None:
+                details.append(f"- Возраст пользователя: {clean_age}")
+            if details:
+                instructions = (
+                    f"{instructions}\n\n"
+                    "Персонализация:\n"
+                    + "\n".join(details)
+                    + "\n- Подстраивай тон и формы речи под имя/пол/возраст. "
+                      "Обращайся по имени, когда уместно, без чрезмерного повторения."
+                )
+        if mode == "chat" and user_memory:
+            clean_memory = " ".join(str(user_memory).split())
+            clean_memory = clean_memory.strip()[:1200]
+            if clean_memory:
+                instructions = (
+                    f"{instructions}\n\n"
+                    "Краткая память о пользователе (используй как контекст, не пересказывай буквально):\n"
+                    f"{clean_memory}"
+                )
+
+        with self.client.responses.stream(
             model=self.model,
             instructions=instructions,
             input=user_text,
-        )
-        return resp.output_text or ""
+        ) as stream:
+            for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    delta = getattr(event, "delta", "")
+                    if delta:
+                        yield delta
+            stream.get_final_response()
