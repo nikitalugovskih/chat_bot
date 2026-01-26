@@ -28,6 +28,7 @@ def admin_panel_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="👥 Все пользователи"), KeyboardButton(text="🔎 Проверить подписку (chat_id)")],
             [KeyboardButton(text="➕ Продлить/выдать +30 дней"), KeyboardButton(text="♻️ Сбросить подписку")],
             [KeyboardButton(text="⭐️ Stars"), KeyboardButton(text="🗑 Удалить пользователя")],
+            [KeyboardButton(text="⬅️ Назад")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Админ-действия 👇",

@@ -806,7 +806,10 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
     ok, reason = await repo.can_make_request(chat_id)
     if not ok:
         # если лимит — предлагаем оплату/подписку
-        await message.answer(reason, reply_markup=subscription_keyboard())
+        if "закончился лимит" in (reason or "").lower():
+            await message.answer(reason, reply_markup=premium_keyboard())
+        else:
+            await message.answer(reason, reply_markup=subscription_keyboard())
         return
 
     # Router disabled: отвечаем на все запросы без отсева.
