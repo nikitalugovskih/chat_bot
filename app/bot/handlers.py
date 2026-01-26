@@ -23,7 +23,9 @@ from app.bot.keyboards import (
     consent_keyboard,
     gender_keyboard,
     premium_keyboard,
+    admin_panel_keyboard,
 )
+from app.bot.admin_handlers import is_admin
 from app.bot.states import ChatFlow
 
 from datetime import datetime, date
@@ -353,9 +355,12 @@ async def onboarding_age(message: Message, state: FSMContext, repo):
     await message.answer("Ок, пишите сообщение — я отвечу 🙂", reply_markup=chat_keyboard())
 
 @router.message((F.text == "👋 Завершить диалог") | (F.text == "Завершить диалог"))
-async def btn_end_chat(message: Message, state: FSMContext, repo):
+async def btn_end_chat(message: Message, state: FSMContext, repo, settings):
     await state.clear()
-    await message.answer("Диалог завершен. Можешь начать новый в любое время.", reply_markup=start_keyboard())
+    await message.answer(
+        "Диалог завершен. Можешь начать новый в любое время.",
+        reply_markup=start_keyboard(is_admin=is_admin(message.chat.id, settings)),
+    )
     await repo.set_end_dialog(message.chat.id, 1)
 
 @router.callback_query(F.data == "profile_edit")
@@ -434,7 +439,7 @@ async def successful_payment(message: Message, repo):
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, repo, state: FSMContext):
+async def cmd_start(message: Message, repo, state: FSMContext, settings):
     chat_id = message.chat.id
 
     # ✅ создать/обновить пользователя + обновить ник/имя
@@ -453,7 +458,7 @@ async def cmd_start(message: Message, repo, state: FSMContext):
         "Или «Личный кабинет», чтобы посмотреть лимиты/оплату.\n"
         "Если нужна поддержка, жми «Поддержка».\n"
     )
-    await message.answer(text, reply_markup=start_keyboard())
+    await message.answer(text, reply_markup=start_keyboard(is_admin=is_admin(chat_id, settings)))
 
 @router.message(Command("subscribe"))
 async def cmd_subscribe(message: Message, repo):
@@ -499,6 +504,13 @@ async def cmd_buy_subscribe(message: Message):
 @router.message(Command("service"))
 async def cmd_service(message: Message):
     await message.answer("В случае предложений/жалоб, пишите на эту почту: test@gmail.com")
+
+@router.message(F.text == "🛠 Админ-панель")
+async def btn_admin_panel(message: Message, settings, state: FSMContext):
+    if not is_admin(message.chat.id, settings):
+        return
+    await state.clear()
+    await message.answer("🛠 Админ-панель:", reply_markup=admin_panel_keyboard())
 
 
 @router.message(Command("ban_untill"))
@@ -769,10 +781,10 @@ async def cb_yk_check(call: CallbackQuery, repo, settings):
     )
 
 @router.callback_query(F.data == "back")
-async def cb_back(call: CallbackQuery, state: FSMContext):
+async def cb_back(call: CallbackQuery, state: FSMContext, settings):
     await state.clear()
     await call.message.edit_text(
-        "Главное меню:", reply_markup=start_keyboard()
+        "Главное меню:", reply_markup=start_keyboard(is_admin=is_admin(call.message.chat.id, settings))
     )
 
 @router.message(ChatFlow.chatting)

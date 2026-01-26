@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from app.bot.keyboards import admins_keyboard, admins_back_keyboard, users_picker_keyboard
+from app.bot.keyboards import admins_keyboard, users_picker_keyboard, admin_panel_keyboard, start_keyboard
 from app.bot.states import AdminFlow
 
 from zoneinfo import ZoneInfo
@@ -35,7 +35,108 @@ async def admins_cmd(message: Message, settings, state: FSMContext):
     if not is_admin(message.chat.id, settings):
         return
     await state.clear()
-    await message.answer("🛠 Админ-панель:", reply_markup=admins_keyboard())
+    await message.answer("🛠 Админ-панель:", reply_markup=admin_panel_keyboard())
+
+@router.message(F.text == "⬅️ Назад")
+async def admins_back_button(message: Message, settings, state: FSMContext):
+    if not is_admin(message.chat.id, settings):
+        return
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=start_keyboard(is_admin=True))
+
+@router.message(F.text == "👥 Все пользователи")
+async def admins_list_users_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+
+    users = await repo.list_users()
+    if not users:
+        await message.answer("Пользователей пока нет.", reply_markup=admin_panel_keyboard())
+        return
+
+    lines = []
+    for u in users[:200]:
+        status = "paid" if u.subscribe == 1 else "free"
+        endp = u.end_payment_date if u.end_payment_date else "-"
+        left = "∞" if u.num_request is None else u.num_request
+        name = f"@{u.username}" if u.username else (u.full_name or "-")
+        lines.append(f"{u.chat_id} | {name} | {status} | left={left} | today={u.total_requests} | end={endp}")
+
+    text = "👥 Пользователи:\n" + "\n".join(lines)
+    if len(text) > 3800:
+        text = text[:3800] + "\n... (обрезано)"
+    await message.answer(text, reply_markup=admin_panel_keyboard())
+
+@router.message(F.text == "🔎 Проверить подписку (chat_id)")
+async def admins_check_user_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+    users = await repo.list_users()
+    await message.answer(
+        "Выбери пользователя для просмотра:",
+        reply_markup=users_picker_keyboard(users, action="check", page=0),
+    )
+
+@router.message(F.text == "➕ Продлить/выдать +30 дней")
+async def admins_grant_30_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+    users = await repo.list_users()
+    await message.answer(
+        "Выбери пользователя — выдам/продлю 30 дней:",
+        reply_markup=users_picker_keyboard(users, action="grant", page=0),
+    )
+
+@router.message(F.text == "♻️ Сбросить подписку")
+async def admins_reset_sub_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+    users = await repo.list_users()
+    await message.answer(
+        "Выбери пользователя — сброшу подписку (free):",
+        reply_markup=users_picker_keyboard(users, action="reset", page=0),
+    )
+
+@router.message(F.text == "🗑 Удалить пользователя")
+async def admins_delete_user_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+    users = await repo.list_users()
+    await message.answer(
+        "Выбери пользователя — удалю из БД (и логи тоже):",
+        reply_markup=users_picker_keyboard(users, action="delete", page=0),
+    )
+
+@router.message(F.text == "⭐️ Stars")
+async def admins_stars_button(message: Message, repo, settings):
+    if not is_admin(message.chat.id, settings):
+        return
+
+    total = await repo.stars_total()
+    top = await repo.stars_top_donors(limit=15)
+    last = await repo.stars_last_payments(limit=10)
+
+    lines = [f"⭐️ Stars total: {total}\n"]
+    if top:
+        lines.append("Топ доноров:")
+        for i, r in enumerate(top, start=1):
+            name = (f"@{r['username']}" if r["username"] else r["full_name"]).strip()
+            if not name:
+                name = "—"
+            lines.append(f"{i}) {r['chat_id']} | {name} | ⭐️ {int(r['stars'])}")
+        lines.append("")
+    if last:
+        lines.append("Последние оплаты:")
+        tz = ZoneInfo("Europe/Moscow")
+        for r in last:
+            dt = r["created_at"].astimezone(tz) if r["created_at"] else r["created_at"]
+            dt_str = dt.strftime("%d.%m %H:%M") if dt else "-"
+            name = (f"@{r['username']}" if r["username"] else r["full_name"]).strip()
+            if not name:
+                name = "—"
+            lines.append(f"{dt_str} | {r['chat_id']} | {name} | ⭐️ {int(r['amount'])}")
+
+    await message.answer("\n".join(lines), reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:back")
 async def adm_back(call: CallbackQuery, settings, state: FSMContext):
@@ -43,7 +144,8 @@ async def adm_back(call: CallbackQuery, settings, state: FSMContext):
         await call.answer("Нет доступа", show_alert=True)
         return
     await state.clear()
-    await call.message.edit_text("🛠 Админ-панель:", reply_markup=admins_keyboard())
+    await call.message.edit_text("🛠 Админ-панель:")
+    await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:list_users")
 async def adm_list_users(call: CallbackQuery, repo, settings):
@@ -53,7 +155,8 @@ async def adm_list_users(call: CallbackQuery, repo, settings):
 
     users = await repo.list_users()
     if not users:
-        await call.message.edit_text("Пользователей пока нет.", reply_markup=admins_back_keyboard())
+        await call.message.edit_text("Пользователей пока нет.")
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     # Telegram ограничивает длину сообщения, поэтому выводим кратко
@@ -69,7 +172,8 @@ async def adm_list_users(call: CallbackQuery, repo, settings):
     text = "👥 Пользователи:\n" + "\n".join(lines)
     if len(text) > 3800:
         text = text[:3800] + "\n... (обрезано)"
-    await call.message.edit_text(text, reply_markup=admins_back_keyboard())
+    await call.message.edit_text(text)
+    await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:check_user")
 async def adm_check_user(call: CallbackQuery, repo, settings):
@@ -94,7 +198,7 @@ async def adm_check_user_input(message: Message, repo, settings, state: FSMConte
     chat_id = int(message.text.strip())
     u = await repo.get_user(chat_id)
     await state.clear()
-    await message.answer("🔎 Данные пользователя:\n\n" + fmt_user(u), reply_markup=admins_keyboard())
+    await message.answer("🔎 Данные пользователя:\n\n" + fmt_user(u), reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:grant_30")
 async def adm_grant_30(call: CallbackQuery, repo, settings):
@@ -121,7 +225,7 @@ async def adm_grant_30_input(message: Message, repo, settings, state: FSMContext
     await state.clear()
     await message.answer(
         f"✅ Готово. Подписка активна до {u.end_payment_date}\n\n" + fmt_user(u),
-        reply_markup=admins_keyboard()
+        reply_markup=admin_panel_keyboard()
     )
 
 @router.callback_query(F.data == "adm:reset_sub")
@@ -147,7 +251,7 @@ async def adm_reset_sub_input(message: Message, repo, settings, state: FSMContex
     chat_id = int(message.text.strip())
     u = await repo.admin_reset_subscription(chat_id)
     await state.clear()
-    await message.answer("♻️ Подписка сброшена.\n\n" + fmt_user(u), reply_markup=admins_keyboard())
+    await message.answer("♻️ Подписка сброшена.\n\n" + fmt_user(u), reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:delete_user")
 async def adm_delete_user(call: CallbackQuery, repo, settings):
@@ -172,7 +276,7 @@ async def adm_delete_user_input(message: Message, repo, settings, state: FSMCont
     chat_id = int(message.text.strip())
     await repo.admin_delete_user(chat_id)
     await state.clear()
-    await message.answer(f"🗑 Пользователь {chat_id} удалён.", reply_markup=admins_keyboard())
+    await message.answer(f"🗑 Пользователь {chat_id} удалён.", reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data.startswith("adm:users:"))
 async def adm_users_page(call: CallbackQuery, repo, settings):
@@ -186,7 +290,8 @@ async def adm_users_page(call: CallbackQuery, repo, settings):
 
     users = await repo.list_users()
     if not users:
-        await call.message.edit_text("Пользователей пока нет.", reply_markup=admins_back_keyboard())
+        await call.message.edit_text("Пользователей пока нет.")
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     await call.message.edit_text(
@@ -206,22 +311,26 @@ async def adm_pick_user(call: CallbackQuery, repo, settings):
 
     if action == "check":
         u = await repo.get_user(chat_id)
-        await call.message.edit_text("🔎 Данные пользователя:\n\n" + fmt_user(u), reply_markup=admins_back_keyboard())
+        await call.message.edit_text("🔎 Данные пользователя:\n\n" + fmt_user(u))
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     if action == "grant":
         u = await repo.admin_extend_paid_30d(chat_id)
-        await call.message.edit_text("✅ Выдал/продлил paid.\n\n" + fmt_user(u), reply_markup=admins_back_keyboard())
+        await call.message.edit_text("✅ Выдал/продлил paid.\n\n" + fmt_user(u))
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     if action == "reset":
         u = await repo.admin_reset_subscription(chat_id)
-        await call.message.edit_text("♻️ Сбросил подписку.\n\n" + fmt_user(u), reply_markup=admins_back_keyboard())
+        await call.message.edit_text("♻️ Сбросил подписку.\n\n" + fmt_user(u))
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     if action == "delete":
         await repo.admin_delete_user(chat_id)
-        await call.message.edit_text(f"🗑 Пользователь {chat_id} удалён.", reply_markup=admins_back_keyboard())
+        await call.message.edit_text(f"🗑 Пользователь {chat_id} удалён.")
+        await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
         return
 
     await call.answer("Неизвестное действие", show_alert=True)
@@ -246,7 +355,8 @@ async def adm_manual(call: CallbackQuery, settings, state: FSMContext):
         await call.answer("Неизвестное действие", show_alert=True)
         return
 
-    await call.message.edit_text("Введи chat_id вручную:", reply_markup=admins_back_keyboard())
+    await call.message.edit_text("Введи chat_id вручную:")
+    await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())
 
 @router.callback_query(F.data == "adm:stars")
 async def adm_stars(call: CallbackQuery, repo, settings):
@@ -291,4 +401,5 @@ async def adm_stars(call: CallbackQuery, repo, settings):
     if len(text) > 3800:
         text = text[:3800] + "\n…"
 
-    await call.message.edit_text(text, reply_markup=admins_back_keyboard())
+    await call.message.edit_text(text)
+    await call.message.answer("Админ-действия:", reply_markup=admin_panel_keyboard())

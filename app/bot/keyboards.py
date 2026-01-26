@@ -7,15 +7,30 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def start_keyboard() -> ReplyKeyboardMarkup:
+def start_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text="💬 Начать"), KeyboardButton(text="Личный Кабинет")],
+        [KeyboardButton(text="❓ Вопрос-Ответ"), KeyboardButton(text="📄 Условия")],
+    ]
+    if is_admin:
+        keyboard.append([KeyboardButton(text="Премиум подписка"), KeyboardButton(text="🛠 Админ-панель")])
+    else:
+        keyboard.append([KeyboardButton(text="Премиум подписка")])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="💬 Начать"), KeyboardButton(text="Личный Кабинет")],
-            [KeyboardButton(text="❓ Вопрос-Ответ"), KeyboardButton(text="📄 Условия")],
-            [KeyboardButton(text="Премиум подписка")],
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
         input_field_placeholder="Выбери действие 👇",
+    )
+
+def admin_panel_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👥 Все пользователи"), KeyboardButton(text="🔎 Проверить подписку (chat_id)")],
+            [KeyboardButton(text="➕ Продлить/выдать +30 дней"), KeyboardButton(text="♻️ Сбросить подписку")],
+            [KeyboardButton(text="⭐️ Stars"), KeyboardButton(text="🗑 Удалить пользователя")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Админ-действия 👇",
     )
 
 def chat_keyboard() -> ReplyKeyboardMarkup:
@@ -85,7 +100,7 @@ def admins_keyboard() -> InlineKeyboardMarkup:
 
 def admins_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:back")],
+        # intentionally empty; back handled via main menu
     ])
 
 def users_picker_keyboard(users, action: str, page: int = 0, per_page: int = 10) -> InlineKeyboardMarkup:
@@ -115,8 +130,7 @@ def users_picker_keyboard(users, action: str, page: int = 0, per_page: int = 10)
     if nav_buttons:
         kb.row(*nav_buttons)
 
-    # ручной ввод + назад
+    # ручной ввод
     kb.row(InlineKeyboardButton(text="⌨️ Ввести chat_id вручную", callback_data=f"adm:manual:{action}"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:back"))
 
     return kb.as_markup()
