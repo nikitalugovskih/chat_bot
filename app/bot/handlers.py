@@ -36,6 +36,7 @@ import logging
 import hashlib
 import contextlib
 import asyncio
+import re
 
 from app.services.summary import build_memory
 
@@ -85,6 +86,27 @@ def _split_response(text: str, max_len: int = 300) -> list[str]:
     if buf:
         parts.append(buf)
     return parts
+
+_ACK_WORDS = {
+    "ок", "окей", "ok", "okay", "ага", "угу", "да", "нет", "понял", "поняла",
+    "ясно", "спасибо", "спс", "мерси", "сенкс", "окейно", "ладно", "хорошо",
+    "привет", "здарова", "пока", "бай",
+}
+
+def _should_update_memory(user_text: str) -> bool:
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    if t.startswith("/"):
+        return False
+    words = re.findall(r"[a-zа-я0-9]+", t.lower())
+    if not words:
+        return False
+    if len(words) <= 2 and all(w in _ACK_WORDS for w in words):
+        return False
+    if len(words) <= 2 and len(t) < 10:
+        return False
+    return True
 
 from aiogram import F
 from aiogram.types import Message
@@ -362,6 +384,7 @@ async def btn_end_chat(message: Message, state: FSMContext, repo, settings):
         reply_markup=start_keyboard(is_admin=is_admin(message.chat.id, settings)),
     )
     await repo.set_end_dialog(message.chat.id, 1)
+    await repo.set_user_memory(message.chat.id, "")
 
 @router.callback_query(F.data == "profile_edit")
 async def cb_profile_edit(call: CallbackQuery, state: FSMContext, repo):
@@ -823,10 +846,7 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
         # 1) показываем "печатает..." + текст
         typing_task = asyncio.create_task(_typing_loop(message.bot, chat_id))
         # loading_sticker = await message.answer_sticker(FSInputFile("app/assets/loader.tgs"))
-        if user_name:
-            loading_text = await message.answer(f"🙏 {user_name}, получил твой запрос, думаю, как тебе помочь…")
-        else:
-            loading_text = await message.answer("🎲 Получил ваш запрос, думаю, как вам помочь…")
+        # typing indicator is enough; no extra loading message
 
         # 2) твой лог + генерация
         prompt_text = getattr(__import__("app.services.openai_client", fromlist=["SYSTEM_PROMPT"]), "SYSTEM_PROMPT", "")
@@ -896,14 +916,13 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)
-    try:
-        u = await repo.get_user(chat_id)
-        if (u.total_requests % 5) == 0:
+    if _should_update_memory(user_text):
+        try:
             asyncio.create_task(
                 _update_memory_bg(repo, memory_llm, chat_id, user_text, answer, user_memory)
             )
-    except Exception:
-        logger.exception("Failed to schedule memory update", extra={"chat_id": chat_id})
+        except Exception:
+            logger.exception("Failed to schedule memory update", extra={"chat_id": chat_id})
 
     parts = _split_response(answer, max_len=800)
     if not parts:
