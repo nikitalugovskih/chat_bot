@@ -108,6 +108,23 @@ def _should_update_memory(user_text: str) -> bool:
         return False
     return True
 
+def _get_start_payload(message: Message) -> str | None:
+    # Prefer framework helper if available; fall back to parsing text.
+    payload = ""
+    get_args = getattr(message, "get_args", None)
+    if callable(get_args):
+        try:
+            payload = (get_args() or "").strip()
+        except Exception:
+            payload = ""
+    if not payload:
+        text = message.text or ""
+        if text.startswith("/start"):
+            parts = text.split(maxsplit=1)
+            if len(parts) > 1:
+                payload = parts[1].strip()
+    return payload or None
+
 from aiogram import F
 from aiogram.types import Message
 
@@ -474,6 +491,11 @@ async def cmd_start(message: Message, repo, state: FSMContext, settings):
     )
 
     await state.clear()
+
+    payload = _get_start_payload(message)
+    if payload == "premium":
+        await btn_premium(message, repo)
+        return
 
     text = (
         "Привет! 👋\n"
