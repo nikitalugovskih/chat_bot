@@ -419,7 +419,7 @@ def make_payload(chat_id: int) -> str:
     # уникальный payload чтобы отличать счета (не обязательно, но полезно)
     return f"sub_30d:{chat_id}:{int(datetime.now().timestamp())}"
 
-async def send_stars_invoice(message: Message, chat_id: int, stars_price: int = 1):
+async def send_stars_invoice(message: Message, chat_id: int, stars_price: int = 299):
     inv_msg = await message.answer_invoice(
         title="Подписка на 30 дней",
         description="Анлим запросов в боте",
@@ -543,7 +543,7 @@ async def cmd_limits(message: Message, repo):
 
 @router.message(Command("buy_subscribe"))
 async def cmd_buy_subscribe(message: Message):
-    await send_stars_invoice(message, message.chat.id, stars_price=1)
+    await send_stars_invoice(message, message.chat.id, stars_price=299)
 
 
 @router.message(Command("service"))
@@ -632,7 +632,7 @@ async def cb_pay_method_stars(call: CallbackQuery, repo):
         return
 
     await call.answer()
-    await send_stars_invoice(call.message, chat_id, stars_price=1)
+    await send_stars_invoice(call.message, chat_id, stars_price=299)
 
 @router.callback_query(F.data == "pay_method:card")
 async def cb_pay_method_card(call: CallbackQuery, repo, settings):

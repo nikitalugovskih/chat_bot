@@ -28,7 +28,7 @@ class YooKassaClient:
     async def create_payment(
         self,
         *,
-        amount_value: str,   # "199.00"
+        amount_value: str,   # "299.00"
         currency: str,       # "RUB"
         description: str,
         idempotence_key: str,

@@ -33,8 +33,8 @@ class Settings:
     yookassa_shop_id: str = os.getenv("YOOKASSA_SHOP_ID", "")
     yookassa_secret_key: str = os.getenv("YOOKASSA_SECRET_KEY", "")
     yookassa_return_url: str = os.getenv("YOOKASSA_RETURN_URL", "")
-    # card_price_rub: str = os.getenv("CARD_PRICE_RUB", "199.00")
-    card_price_rub: str = os.getenv("CARD_PRICE_RUB", "1")
+    # card_price_rub: str = os.getenv("CARD_PRICE_RUB", "299.00")
+    card_price_rub: str = os.getenv("CARD_PRICE_RUB", "299.00")
 
     @property
     def pg_dsn(self) -> str:
