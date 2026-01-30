@@ -659,21 +659,26 @@ async def cb_pay_method_card(call: CallbackQuery, repo, settings):
 
     await call.answer()
 
-    # ✅ 1) Сначала пытаемся переиспользовать свежий pending (до 10 минут)
+    # текущая цена
+    amount_value = settings.card_price_rub.strip()  # "299.00"
+    amount_kopecks = int((Decimal(amount_value) * 100).to_integral_value())
+
+    # ✅ 1) Сначала пытаемся переиспользовать свежий pending (до 10 минут),
+    # но только если сумма совпадает с текущей ценой
     recent = await repo.yk_get_recent_pending(chat_id, ttl_minutes=10)
     if recent:
-        payment_id = recent["external_payment_id"]
-        confirmation_url = recent["confirmation_url"]
-        await call.message.answer(
-            "⏳ У вас уже есть созданный платеж (он действует около 10 минут).\n"
-            "Используйте кнопку ниже:",
-            reply_markup=yookassa_pay_keyboard(confirmation_url, payment_id),
-        )
-        return
+        recent_amount = recent.get("amount")
+        if recent_amount == amount_kopecks:
+            payment_id = recent["external_payment_id"]
+            confirmation_url = recent["confirmation_url"]
+            await call.message.answer(
+                "⏳ У вас уже есть созданный платеж (он действует около 10 минут).\n"
+                "Используйте кнопку ниже:",
+                reply_markup=yookassa_pay_keyboard(confirmation_url, payment_id),
+            )
+            return
 
     # ✅ 2) Если свежего pending нет — создаём новый
-    amount_value = settings.card_price_rub.strip()  # "199.00"
-    amount_kopecks = int((Decimal(amount_value) * 100).to_integral_value())
 
     idem_key = str(uuid.uuid4())
     payload = make_payload(chat_id)

@@ -686,7 +686,8 @@ class Repository:
                     external_payment_id,
                     confirmation_url,
                     created_at,
-                    status
+                    status,
+                    amount
                 FROM payments
                 WHERE provider='yookassa'
                   AND chat_id=$1
