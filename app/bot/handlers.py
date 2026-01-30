@@ -189,6 +189,60 @@ PERSONALIZATION_TEXT = (
     "Так наше общение становится комфортнее и естественнее."
 )
 
+async def _restore_state_or_prompt(message: Message, state: FSMContext, repo, settings) -> bool:
+    chat_id = message.chat.id
+    profile = await repo.get_user_profile(chat_id)
+    if not profile:
+        await message.answer(
+            "Нажми «💬 Начать» или /start, чтобы запустить диалог.",
+            reply_markup=start_keyboard(is_admin=is_admin(chat_id, settings)),
+        )
+        return False
+
+    if profile.end_dialog == 1:
+        await message.answer(
+            "Диалог завершен. Нажми «💬 Начать», чтобы начать снова.",
+            reply_markup=start_keyboard(is_admin=is_admin(chat_id, settings)),
+        )
+        return False
+
+    if profile.consented != 1:
+        await message.answer(CONSENT_TEXT, reply_markup=consent_keyboard())
+        return False
+
+    started_at = profile.started_at
+
+    if not profile.name:
+        await state.set_state(ChatFlow.waiting_name)
+        await state.update_data(started_at=started_at)
+        await message.answer(
+            PERSONALIZATION_TEXT + "\n\nКак тебя зовут?",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return False
+
+    if not profile.gender:
+        await state.set_state(ChatFlow.waiting_gender)
+        await state.update_data(name=profile.name, started_at=started_at)
+        await message.answer("Твой пол?", reply_markup=gender_keyboard())
+        return False
+
+    if not profile.age:
+        await state.set_state(ChatFlow.waiting_age)
+        await state.update_data(
+            name=profile.name,
+            gender=profile.gender,
+            started_at=started_at,
+        )
+        await message.answer(
+            "Сколько тебе лет? Введи число.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return False
+
+    await state.set_state(ChatFlow.chatting)
+    return True
+
 # --- КНОПКИ ГЛАВНОГО МЕНЮ (reply keyboard) ---
 
 @router.message(F.text == "💬 Начать")
@@ -958,6 +1012,22 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
         if typing_task and typing_task.done() is False:
             await message.bot.send_chat_action(chat_id, ChatAction.TYPING)
         await message.answer(part)
+
+@router.message(F.text)
+async def fallback_message(message: Message, state: FSMContext, repo, llm, memory_llm, settings):
+    if await state.get_state():
+        return
+
+    if (message.text or "").strip().startswith("/"):
+        await message.answer(
+            "Команда не распознана. Нажми «💬 Начать» или /start.",
+            reply_markup=start_keyboard(is_admin=is_admin(message.chat.id, settings)),
+        )
+        return
+
+    ready = await _restore_state_or_prompt(message, state, repo, settings)
+    if ready:
+        await on_chat_message(message, repo, llm, memory_llm)
         if i < len(parts) - 1:
             await asyncio.sleep(4.0)
     if typing_task:
