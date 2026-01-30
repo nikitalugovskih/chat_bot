@@ -994,6 +994,10 @@ async def on_chat_message(message: Message, repo, llm, memory_llm):
                     await m.delete()
                 except Exception:
                     pass
+        if typing_task:
+            typing_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await typing_task
 
     # "Одно действие": обновили user_subscriptions + вставили requests_log
     await repo.record_interaction_atomic(chat_id, user_text, answer)
@@ -1028,9 +1032,3 @@ async def fallback_message(message: Message, state: FSMContext, repo, llm, memor
     ready = await _restore_state_or_prompt(message, state, repo, settings)
     if ready:
         await on_chat_message(message, repo, llm, memory_llm)
-        if i < len(parts) - 1:
-            await asyncio.sleep(4.0)
-    if typing_task:
-        typing_task.cancel()
-        with contextlib.suppress(Exception):
-            await typing_task
